@@ -331,36 +331,50 @@ Wynik:
 ### Krok 1: Sklonuj repozytorium
 
 ```powershell
-git clone <repo-url>
-cd foundry-vnet-test
+git clone https://github.com/AzureClub/foundry-enterprise-workshop.git
+cd foundry-enterprise-workshop
 ```
 
-### Krok 2: Zaloguj się do Azure
+### Krok 2: Skonfiguruj środowisko (.env)
 
 ```powershell
-az login
-az account set --subscription "TWOJA-SUBSKRYPCJA-ID"
-az account show --query "{name:name, id:id}" -o table
+# Skopiuj szablon
+cp .env.example .env
 ```
 
-### Krok 3: Skonfiguruj parametry
+Otwórz `.env` i uzupełnij wartości:
 
-Otwórz `config/test-config.json` i dostosuj:
+```env
+# Azure Subscription
+AZURE_SUBSCRIPTION_ID=twoja-subskrypcja-id
+AZURE_RESOURCE_GROUP=rg-foundry-byovnet
+AZURE_LOCATION=swedencentral
 
-```json
-{
-  "subscription_id": "TWOJA-SUBSKRYPCJA-ID",
-  "resource_group": "rg-foundry-byovnet",
-  "location": "swedencentral"
-}
+# VM Jumpbox
+VM_ADMIN_PASSWORD=TwojeHaslo123!
+
+# Lab User (Faza 7b)
+LAB_USER_PASSWORD=HasloLabUser123!
+LAB_USER_UPN=userlab01@twoja-domena.onmicrosoft.com
+```
+
+> ⚠️ **Plik `.env` jest w `.gitignore` — nigdy nie zostanie wypchnięty do repozytorium!**
+> Hasła i subscription ID są bezpieczne.
+
+Załaduj konfigurację:
+
+```powershell
+. .\scripts\load-env.ps1
 ```
 
 > 💡 **Wspierane regiony**: Sweden Central, East US, East US 2, West Europe, France Central, Australia East
 
-### Krok 4: Ustaw hasło dla maszyny wirtualnej
+### Krok 3: Zaloguj się do Azure
 
 ```powershell
-$env:VM_ADMIN_PASSWORD = "WybierzSilneHaslo123!"
+az login
+az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+az account show --query "{name:name, id:id}" -o table
 ```
 
 > ⚠️ Hasło musi spełniać wymagania Azure: min. 12 znaków, wielkie i małe litery, cyfra, znak specjalny.

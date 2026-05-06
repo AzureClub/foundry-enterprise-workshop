@@ -2,6 +2,10 @@
 report.txt
 *.log
 
+# Secrets — NEVER commit!
+.env
+.env.*
+
 # Temporary files
 cs-ops.json
 custom-role.json
