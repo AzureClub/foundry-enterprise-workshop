@@ -16,3 +16,4 @@ custom-role.json
 # OS
 Thumbs.db
 .DS_Store
+bicep/main.json
