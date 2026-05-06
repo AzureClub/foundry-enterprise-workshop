@@ -6,6 +6,9 @@ report.txt
 .env
 !.env.example
 
+# Session notes (contain sensitive data)
+SESSION-SUMMARY.md
+
 # Temporary files
 cs-ops.json
 custom-role.json
