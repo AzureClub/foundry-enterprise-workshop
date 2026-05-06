@@ -1,0 +1,14 @@
+# Test outputs
+report.txt
+*.log
+
+# Temporary files
+cs-ops.json
+custom-role.json
+
+# Azure
+.azure/
+
+# OS
+Thumbs.db
+.DS_Store

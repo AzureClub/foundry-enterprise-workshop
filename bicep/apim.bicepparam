@@ -1,0 +1,10 @@
+using 'apim.bicep'
+
+param location = 'swedencentral'
+param apimName = 'apim-foundry-test'
+param publisherEmail = 'admin@contoso.com'
+param publisherName = 'Foundry VNet Test'
+param vnetName = 'vnet-foundry-test'
+param apimSubnetName = 'snet-apim'
+param apimSubnetPrefix = '192.168.2.0/27'
+param aiServicesNamePrefix = 'ai-foundry-byovnet'
