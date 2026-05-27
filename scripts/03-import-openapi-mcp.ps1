@@ -16,6 +16,10 @@ param(
 $ErrorActionPreference = "Stop"
 $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 $rg = $config.resource_group
+$subId = $config.subscription_id
+if (-not $subId -or $subId -eq "YOUR-SUBSCRIPTION-ID") {
+    $subId = az account show --query "id" -o tsv 2>&1
+}
 
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "  IMPORT OpenAI + MCP APIs into APIM" -ForegroundColor Cyan
@@ -199,70 +203,30 @@ if ($LASTEXITCODE -eq 0) {
 # ============================================================================
 Write-Host "`n--- Configuring MI-authenticated backend policies ---" -ForegroundColor Yellow
 
-$openaiPolicy = @"
-<policies>
-    <inbound>
-        <base />
-        <set-backend-service base-url="$foundryEndpoint/openai" />
-        <authentication-managed-identity resource="https://cognitiveservices.azure.com/" />
-    </inbound>
-    <backend><base /></backend>
-    <outbound><base /></outbound>
-    <on-error><base /></on-error>
-</policies>
-"@
+$openaiPolicyXml = "<policies><inbound><base /><set-backend-service base-url=`"$foundryEndpoint/openai`" /><authentication-managed-identity resource=`"https://cognitiveservices.azure.com/`" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>"
+$agentPolicyXml = "<policies><inbound><base /><set-backend-service base-url=`"$agentEndpoint`" /><authentication-managed-identity resource=`"https://cognitiveservices.azure.com/`" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>"
 
-$policyFile = "$env:TEMP\apim-policy-openai.xml"
-$openaiPolicy | Out-File -FilePath $policyFile -Encoding utf8 -Force
+foreach ($api in @(@{id="openai-chat"; label="OpenAI"; xml=$openaiPolicyXml}, @{id="foundry-agent"; label="Agent"; xml=$agentPolicyXml})) {
+    $body = @{ properties = @{ format = "xml"; value = $api.xml } } | ConvertTo-Json -Depth 5 -Compress
+    $bodyFile = "$env:TEMP\apim-policy-$($api.id).json"
+    [System.IO.File]::WriteAllText($bodyFile, $body, [System.Text.Encoding]::UTF8)
 
-az apim api policy create `
-    --api-id "openai-chat" `
-    --service-name $apimName `
-    --resource-group $rg `
-    --xml-file $policyFile `
-    -o none 2>&1
+    $uri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$apimName/apis/$($api.id)/policies/policy?api-version=2024-06-01-preview"
+    az rest --method PUT --uri $uri --body "@$bodyFile" -o none 2>&1
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  $([char]0x2705) OpenAI API policy configured (MI auth)" -ForegroundColor Green
-} else {
-    Write-Host "  $([char]0x274C) OpenAI API policy failed" -ForegroundColor Red
-    $failCount++
-}
-
-$agentPolicy = @"
-<policies>
-    <inbound>
-        <base />
-        <set-backend-service base-url="$agentEndpoint" />
-        <authentication-managed-identity resource="https://cognitiveservices.azure.com/" />
-    </inbound>
-    <backend><base /></backend>
-    <outbound><base /></outbound>
-    <on-error><base /></on-error>
-</policies>
-"@
-
-$agentPolicyFile = "$env:TEMP\apim-policy-agent.xml"
-$agentPolicy | Out-File -FilePath $agentPolicyFile -Encoding utf8 -Force
-
-az apim api policy create `
-    --api-id "foundry-agent" `
-    --service-name $apimName `
-    --resource-group $rg `
-    --xml-file $agentPolicyFile `
-    -o none 2>&1
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  $([char]0x2705) Agent API policy configured (MI auth)" -ForegroundColor Green
-} else {
-    Write-Host "  $([char]0x274C) Agent API policy failed" -ForegroundColor Red
-    $failCount++
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  $([char]0x2705) $($api.label) API policy configured (MI auth)" -ForegroundColor Green
+    } else {
+        Write-Host "  $([char]0x274C) $($api.label) API policy failed" -ForegroundColor Red
+        $failCount++
+    }
+    Remove-Item $bodyFile -Force -ErrorAction SilentlyContinue
 }
 
 # ============================================================================
 # Cleanup temp files
 # ============================================================================
-Remove-Item -Path $specFile, $agentSpecFile, $policyFile, $agentPolicyFile -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $specFile, $agentSpecFile -Force -ErrorAction SilentlyContinue
 
 # ============================================================================
 # Summary

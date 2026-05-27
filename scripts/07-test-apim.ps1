@@ -63,7 +63,7 @@ if ($miType -like "*SystemAssigned*") {
 # --- 4. VNet Subnet configuration ---
 Write-Host "Checking subnet binding..." -ForegroundColor Yellow
 $subnetId = $apimJson.virtualNetworkConfiguration.subnetResourceId
-$expectedSubnet = $config.vnet.apim_subnet.name
+$expectedSubnet = if ($config.vnet.subnets.apim) { $config.vnet.subnets.apim } else { $config.vnet.apim_subnet.name }
 if ($subnetId -like "*$expectedSubnet*") {
     Add-Result "Subnet Binding" "PASS" "$expectedSubnet"
 } else {
