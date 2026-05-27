@@ -29,8 +29,9 @@ $headers = @{
 }
 
 $endpoint = "https://ai-foundry-byovnet-unrkke4ibdxcm.services.ai.azure.com/api/projects/project-agent-test"
+$openaiEndpoint = "$endpoint/openai/v1"
 $modelName = "apim-openai-gateway/gpt-4.1"
-$apiVersion = "2025-05-15-preview"
+$apiVersion = "v1"
 
 # --- Step 1: Create Prompt Agent ---
 Write-Host "1. Creating Prompt Agent with model: $modelName" -ForegroundColor Yellow
@@ -47,7 +48,7 @@ $agentBody = @{
 try {
     $agent = Invoke-RestMethod -Uri "$endpoint/agents?api-version=$apiVersion" `
         -Method POST -Headers $headers -Body $agentBody
-    Write-Host "   Agent created: $($agent.id) (name: $($agent.name), version: $($agent.version))" -ForegroundColor Green
+    Write-Host "   Agent created: $($agent.name)" -ForegroundColor Green
 } catch {
     Write-Host "   FAIL: $($_.Exception.Message)" -ForegroundColor Red
     if ($_.ErrorDetails) { Write-Host "   $($_.ErrorDetails.Message)" -ForegroundColor Red }
@@ -59,27 +60,18 @@ try {
     exit 1
 }
 
-# --- Step 2: Create Conversation ---
-Write-Host "2. Creating conversation..." -ForegroundColor Yellow
-$conv = Invoke-RestMethod -Uri "$endpoint/conversations?api-version=$apiVersion" `
-    -Method POST -Headers $headers -Body '{}'
-Write-Host "   Conversation: $($conv.id)" -ForegroundColor Green
-
-# --- Step 3: Send message via responses API ---
-Write-Host "3. Sending message..." -ForegroundColor Yellow
+# --- Step 2: Send message via /openai/v1/responses (stateless) ---
+Write-Host "2. Sending message via /openai/v1/responses..." -ForegroundColor Yellow
 $respBody = @{
-    input = "Czym jest Azure API Management? Odpowiedz jednym zdaniem."
-    extra_body = @{
-        agent_reference = @{
-            name = $agent.name
-            type = "agent_reference"
-        }
+    agent_reference = @{
+        name = $agent.name
+        type = "agent_reference"
     }
-    conversation_id = $conv.id
+    input = "Czym jest Azure API Management? Odpowiedz jednym zdaniem."
 } | ConvertTo-Json -Depth 5 -Compress
 
 try {
-    $response = Invoke-RestMethod -Uri "$endpoint/responses?api-version=$apiVersion" `
+    $response = Invoke-RestMethod -Uri "$openaiEndpoint/responses" `
         -Method POST -Headers $headers -Body $respBody
     
     # Extract reply text
@@ -107,7 +99,7 @@ try {
     Write-Host $reply
     Write-Host "`n$([char]0x2705) BYOM E2E TEST: PASS" -ForegroundColor Green
     Write-Host "  Model: $modelName" -ForegroundColor Gray
-    Write-Host "  API: $apiVersion" -ForegroundColor Gray
+    Write-Host "  Endpoint: /openai/v1/responses" -ForegroundColor Gray
     Write-Host "  Flow: Agent -> APIM (Internal VNet) -> Foundry OpenAI (PE)" -ForegroundColor Gray
 } catch {
     Write-Host "`n$([char]0x274C) BYOM E2E TEST: FAIL" -ForegroundColor Red
@@ -116,17 +108,11 @@ try {
 }
 
 # --- Cleanup ---
-Write-Host "`n4. Cleanup..." -ForegroundColor Yellow
+Write-Host "`n3. Cleanup..." -ForegroundColor Yellow
 try {
-    Invoke-RestMethod -Uri "$endpoint/agents/$($agent.name)/versions/$($agent.version)?api-version=$apiVersion" `
+    Invoke-RestMethod -Uri "$endpoint/agents/$($agent.name)?api-version=$apiVersion" `
         -Method DELETE -Headers $headers | Out-Null
-    Write-Host "   Agent version deleted." -ForegroundColor Green
+    Write-Host "   Agent deleted." -ForegroundColor Green
 } catch {
-    try {
-        Invoke-RestMethod -Uri "$endpoint/agents/$($agent.id)?api-version=$apiVersion" `
-            -Method DELETE -Headers $headers | Out-Null
-        Write-Host "   Agent deleted." -ForegroundColor Green
-    } catch {
-        Write-Host "   Warning: cleanup failed: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
+    Write-Host "   Warning: cleanup failed: $($_.Exception.Message)" -ForegroundColor Yellow
 }
