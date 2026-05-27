@@ -219,7 +219,6 @@ resource dnsRecordScm 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
 // RBAC: APIM MI → Cognitive Services OpenAI User on Foundry account
 // ============================================================================
 var cognitiveServicesOpenAIUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
-var azureAIDeveloper = '64702f94-c441-49e6-a78b-ef80e0188fee'
 
 // OpenAI inference (chat completions)
 resource apimCogServicesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -228,17 +227,6 @@ resource apimCogServicesRole 'Microsoft.Authorization/roleAssignments@2022-04-01
   properties: {
     principalId: apim.identity.principalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAIUser)
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Agent Service operations (create agent, threads, runs)
-resource apimAiDeveloperRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aiServices.id, apim.id, azureAIDeveloper)
-  scope: aiServices
-  properties: {
-    principalId: apim.identity.principalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', azureAIDeveloper)
     principalType: 'ServicePrincipal'
   }
 }

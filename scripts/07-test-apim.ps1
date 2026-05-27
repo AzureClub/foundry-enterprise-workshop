@@ -141,18 +141,11 @@ Write-Host "Checking imported APIs..." -ForegroundColor Yellow
 try {
     $apis = az apim api list --service-name $apimName --resource-group $rg --query "[?apiId!='echo-api'].{name:displayName, path:path, id:apiId}" -o json 2>&1 | ConvertFrom-Json
     $openaiApi = $apis | Where-Object { $_.id -like "*openai*" -or $_.path -like "*openai*" }
-    $agentApi = $apis | Where-Object { $_.id -like "*agent*" -or $_.path -like "*agent*" }
 
     if ($openaiApi) {
         Add-Result "API: OpenAI Chat" "PASS" "Path: /$($openaiApi.path)"
     } else {
         Add-Result "API: OpenAI Chat" "WARN" "Not imported yet (run 03-import-openapi-mcp.ps1)"
-    }
-
-    if ($agentApi) {
-        Add-Result "API: Foundry Agent (MCP)" "PASS" "Path: /$($agentApi.path)"
-    } else {
-        Add-Result "API: Foundry Agent (MCP)" "WARN" "Not imported yet (run 03-import-openapi-mcp.ps1)"
     }
 } catch {
     Add-Result "API Import Check" "WARN" "Error listing APIs: $($_.Exception.Message)"
@@ -182,6 +175,5 @@ Write-Host "`n--- APIM Connectivity Tests (from inside VNet) ---" -ForegroundCol
 Write-Host "Run from Jumpbox VM via Bastion:" -ForegroundColor Gray
 Write-Host "  1. curl https://$apimName.azure-api.net/status-0123456789abcdef" -ForegroundColor Gray
 Write-Host "  2. curl -X POST https://$apimName.azure-api.net/openai/deployments/$($config.foundry.model_name)/chat/completions?api-version=2024-12-01-preview -H 'Content-Type: application/json' -d '{`"messages`":[{`"role`":`"user`",`"content`":`"test`"}]}'" -ForegroundColor Gray
-Write-Host "  3. curl https://$apimName.azure-api.net/agent/agents?api-version=2025-05-01-preview" -ForegroundColor Gray
 
 if ($fail -gt 0) { exit 1 } else { exit 0 }

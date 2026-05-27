@@ -1,11 +1,10 @@
 <#
 .SYNOPSIS
-    Import OpenAI and MCP-proxy APIs into APIM with Managed Identity auth.
+    Import OpenAI Chat Completions API into APIM with Managed Identity auth.
 .DESCRIPTION
     1. Discovers APIM instance and Foundry endpoint
     2. Imports OpenAI Chat Completions API
-    3. Imports Foundry Agent proxy API (MCP-like)
-    4. Configures MI-authenticated backend policy on both
+    3. Configures MI-authenticated backend policy
     Run after 02-deploy-apim.ps1.
 #>
 param(
@@ -22,7 +21,7 @@ if (-not $subId -or $subId -eq "YOUR-SUBSCRIPTION-ID") {
 }
 
 Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  IMPORT OpenAI + MCP APIs into APIM" -ForegroundColor Cyan
+Write-Host "  IMPORT OpenAI API into APIM" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
 # --- Discover APIM name ---
@@ -42,11 +41,8 @@ if ($rawEndpoint -and $rawEndpoint -ne "") {
 } else {
     $foundryEndpoint = "https://$($aiAccount.name).cognitiveservices.azure.com"
 }
-$agentEndpoint = "https://$($aiAccount.name).services.ai.azure.com"
 Write-Host "  Foundry (OpenAI): $foundryEndpoint" -ForegroundColor Green
-Write-Host "  Foundry (Agent):  $agentEndpoint" -ForegroundColor Green
 
-$modelName = $config.foundry.model_name
 $failCount = 0
 
 # ============================================================================
@@ -118,115 +114,30 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # ============================================================================
-# 2. Foundry Agent Proxy API (MCP-compatible)
+# 2. Set inbound policy — MI auth + backend URL
 # ============================================================================
-Write-Host "`n--- Importing Foundry Agent Proxy API ---" -ForegroundColor Yellow
-
-$agentSpec = @{
-    openapi = "3.0.1"
-    info = @{
-        title = "Foundry Agent Proxy (MCP)"
-        version = "1.0"
-        description = "Proxy to Foundry Agent Service for MCP-like scenarios"
-    }
-    paths = @{
-        "/agents" = @{
-            post = @{
-                operationId = "createAgent"
-                summary = "Create an agent"
-                parameters = @(
-                    @{ name = "api-version"; "in" = "query"; required = $true; schema = @{ type = "string"; default = "2025-05-01-preview" } }
-                )
-                requestBody = @{
-                    content = @{
-                        "application/json" = @{
-                            schema = @{ type = "object" }
-                        }
-                    }
-                }
-                responses = @{ "200" = @{ description = "Agent created" } }
-            }
-            get = @{
-                operationId = "listAgents"
-                summary = "List agents"
-                parameters = @(
-                    @{ name = "api-version"; "in" = "query"; required = $true; schema = @{ type = "string"; default = "2025-05-01-preview" } }
-                )
-                responses = @{ "200" = @{ description = "Agent list" } }
-            }
-        }
-        "/agents/{agent-id}/threads" = @{
-            post = @{
-                operationId = "createThread"
-                summary = "Create a thread for agent conversation"
-                parameters = @(
-                    @{ name = "agent-id"; "in" = "path"; required = $true; schema = @{ type = "string" } }
-                    @{ name = "api-version"; "in" = "query"; required = $true; schema = @{ type = "string"; default = "2025-05-01-preview" } }
-                )
-                requestBody = @{
-                    content = @{
-                        "application/json" = @{
-                            schema = @{ type = "object" }
-                        }
-                    }
-                }
-                responses = @{ "200" = @{ description = "Thread created" } }
-            }
-        }
-    }
-} | ConvertTo-Json -Depth 15
-
-$agentSpecFile = "$env:TEMP\agent-spec.json"
-$agentSpec | Out-File -FilePath $agentSpecFile -Encoding utf8 -Force
-
-az apim api import `
-    --api-id "foundry-agent" `
-    --path "agent" `
-    --service-name $apimName `
-    --resource-group $rg `
-    --specification-format OpenApi `
-    --specification-path $agentSpecFile `
-    --display-name "Foundry Agent Proxy (MCP)" `
-    --protocols https `
-    --subscription-required $false `
-    -o none 2>&1
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  $([char]0x2705) Agent API imported" -ForegroundColor Green
-} else {
-    Write-Host "  $([char]0x274C) Agent API import failed" -ForegroundColor Red
-    $failCount++
-}
-
-# ============================================================================
-# 3. Set inbound policies— MI auth + backend URL
-# ============================================================================
-Write-Host "`n--- Configuring MI-authenticated backend policies ---" -ForegroundColor Yellow
+Write-Host "`n--- Configuring MI-authenticated backend policy ---" -ForegroundColor Yellow
 
 $openaiPolicyXml = "<policies><inbound><base /><set-backend-service base-url=`"$foundryEndpoint/openai`" /><authentication-managed-identity resource=`"https://cognitiveservices.azure.com/`" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>"
-$agentPolicyXml = "<policies><inbound><base /><set-backend-service base-url=`"$agentEndpoint`" /><authentication-managed-identity resource=`"https://cognitiveservices.azure.com/`" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>"
 
-foreach ($api in @(@{id="openai-chat"; label="OpenAI"; xml=$openaiPolicyXml}, @{id="foundry-agent"; label="Agent"; xml=$agentPolicyXml})) {
-    $body = @{ properties = @{ format = "xml"; value = $api.xml } } | ConvertTo-Json -Depth 5 -Compress
-    $bodyFile = "$env:TEMP\apim-policy-$($api.id).json"
-    [System.IO.File]::WriteAllText($bodyFile, $body, [System.Text.Encoding]::UTF8)
+$body = @{ properties = @{ format = "xml"; value = $openaiPolicyXml } } | ConvertTo-Json -Depth 5 -Compress
+$bodyFile = "$env:TEMP\apim-policy-openai.json"
+[System.IO.File]::WriteAllText($bodyFile, $body, [System.Text.Encoding]::UTF8)
 
-    $uri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$apimName/apis/$($api.id)/policies/policy?api-version=2024-06-01-preview"
-    az rest --method PUT --uri $uri --body "@$bodyFile" -o none 2>&1
+$uri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$apimName/apis/openai-chat/policies/policy?api-version=2024-06-01-preview"
+az rest --method PUT --uri $uri --body "@$bodyFile" -o none 2>&1
 
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  $([char]0x2705) $($api.label) API policy configured (MI auth)" -ForegroundColor Green
-    } else {
-        Write-Host "  $([char]0x274C) $($api.label) API policy failed" -ForegroundColor Red
-        $failCount++
-    }
-    Remove-Item $bodyFile -Force -ErrorAction SilentlyContinue
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  $([char]0x2705) OpenAI API policy configured (MI auth)" -ForegroundColor Green
+} else {
+    Write-Host "  $([char]0x274C) OpenAI API policy failed" -ForegroundColor Red
+    $failCount++
 }
 
 # ============================================================================
 # Cleanup temp files
 # ============================================================================
-Remove-Item -Path $specFile, $agentSpecFile -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $specFile, $bodyFile -Force -ErrorAction SilentlyContinue
 
 # ============================================================================
 # Summary
@@ -240,10 +151,9 @@ foreach ($api in $apis) {
     Write-Host "  API: $($api.name) | Path: /$($api.path) | ID: $($api.id)" -ForegroundColor Green
 }
 
-Write-Host "`nBackend (OpenAI): $foundryEndpoint/openai" -ForegroundColor Gray
-Write-Host "Backend (Agent):  $agentEndpoint" -ForegroundColor Gray
-Write-Host "Auth: Managed Identity (Cognitive Services OpenAI User + Azure AI Developer)" -ForegroundColor Gray
-Write-Host "`nNOTE: APIs can only be called from inside the VNet (APIM Internal mode)." -ForegroundColor Yellow
+Write-Host "`nBackend: $foundryEndpoint/openai" -ForegroundColor Gray
+Write-Host "Auth: Managed Identity (Cognitive Services OpenAI User)" -ForegroundColor Gray
+Write-Host "`nNOTE: API can only be called from inside the VNet (APIM Internal mode)." -ForegroundColor Yellow
 Write-Host "Test from Jumpbox VM via Bastion or through VPN P2S." -ForegroundColor Yellow
 
 if ($failCount -gt 0) {
