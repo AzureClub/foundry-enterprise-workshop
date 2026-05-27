@@ -13,6 +13,9 @@ SESSION-SUMMARY.md
 cs-ops.json
 custom-role.json
 
+# Copilot session exports
+copilot-session-*.md
+
 # Azure
 .azure/
 

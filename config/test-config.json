@@ -1,7 +1,7 @@
 {
   "resource_group": "rg-foundry-byovnet",
   "location": "swedencentral",
-  "subscription_id": "38b8b5d4-b3a1-4892-b2a7-3f5bcfdad59f",
+  "subscription_id": "YOUR-SUBSCRIPTION-ID",
   "vnet": {
     "name": "vnet-foundry-test",
     "address_space": "192.168.0.0/16",
