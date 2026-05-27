@@ -1,0 +1,315 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "16426375503696011526"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "swedencentral",
+      "metadata": {
+        "description": "Azure region"
+      }
+    },
+    "apimName": {
+      "type": "string",
+      "defaultValue": "apim-foundry-test",
+      "metadata": {
+        "description": "APIM name prefix"
+      }
+    },
+    "publisherEmail": {
+      "type": "string",
+      "defaultValue": "admin@contoso.com",
+      "metadata": {
+        "description": "Publisher configuration"
+      }
+    },
+    "publisherName": {
+      "type": "string",
+      "defaultValue": "Foundry VNet Test"
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "vnet-foundry-test",
+      "metadata": {
+        "description": "Existing VNet name (from main.bicep)"
+      }
+    },
+    "apimSubnetName": {
+      "type": "string",
+      "defaultValue": "snet-apim",
+      "metadata": {
+        "description": "APIM subnet configuration"
+      }
+    },
+    "apimSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "192.168.2.0/27"
+    },
+    "aiServicesNamePrefix": {
+      "type": "string",
+      "defaultValue": "ai-foundry-byovnet",
+      "metadata": {
+        "description": "Foundry account name prefix (must match main.bicep)"
+      }
+    },
+    "uniqueSuffix": {
+      "type": "string",
+      "defaultValue": "[uniqueString(resourceGroup().id)]",
+      "metadata": {
+        "description": "Unique suffix — must match main.bicep"
+      }
+    }
+  },
+  "variables": {
+    "aiServicesUniqueName": "[format('{0}-{1}', parameters('aiServicesNamePrefix'), parameters('uniqueSuffix'))]",
+    "apimUniqueName": "[format('{0}-{1}', parameters('apimName'), parameters('uniqueSuffix'))]",
+    "cognitiveServicesOpenAIUser": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "nsg-apim",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowAPIMManagement",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3443",
+              "sourceAddressPrefix": "ApiManagement",
+              "destinationAddressPrefix": "VirtualNetwork",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowAzureLoadBalancer",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "6390",
+              "sourceAddressPrefix": "AzureLoadBalancer",
+              "destinationAddressPrefix": "VirtualNetwork",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowVNetHTTPS",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "VirtualNetwork",
+              "access": "Allow",
+              "priority": 120,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowStorageOutbound",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "Storage",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Outbound"
+            }
+          },
+          {
+            "name": "AllowSQLOutbound",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "1433",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "Sql",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Outbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', parameters('vnetName'), parameters('apimSubnetName'))]",
+      "properties": {
+        "addressPrefix": "[parameters('apimSubnetPrefix')]",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-apim')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-apim')]"
+      ]
+    },
+    {
+      "type": "Microsoft.ApiManagement/service",
+      "apiVersion": "2024-06-01-preview",
+      "name": "[variables('apimUniqueName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Developer",
+        "capacity": 1
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "publisherEmail": "[parameters('publisherEmail')]",
+        "publisherName": "[parameters('publisherName')]",
+        "virtualNetworkType": "Internal",
+        "virtualNetworkConfiguration": {
+          "subnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('apimSubnetName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('apimSubnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "azure-api.net",
+      "location": "global"
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'azure-api.net', 'apim-vnet-link')]",
+      "location": "global",
+      "properties": {
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+        },
+        "registrationEnabled": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'azure-api.net')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/A",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'azure-api.net', variables('apimUniqueName'))]",
+      "properties": {
+        "ttl": 3600,
+        "aRecords": [
+          {
+            "ipv4Address": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').privateIPAddresses[0]]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'azure-api.net')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/A",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'azure-api.net', format('{0}.developer', variables('apimUniqueName')))]",
+      "properties": {
+        "ttl": 3600,
+        "aRecords": [
+          {
+            "ipv4Address": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').privateIPAddresses[0]]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'azure-api.net')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/A",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'azure-api.net', format('{0}.management', variables('apimUniqueName')))]",
+      "properties": {
+        "ttl": 3600,
+        "aRecords": [
+          {
+            "ipv4Address": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').privateIPAddresses[0]]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'azure-api.net')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/A",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'azure-api.net', format('{0}.scm', variables('apimUniqueName')))]",
+      "properties": {
+        "ttl": 3600,
+        "aRecords": [
+          {
+            "ipv4Address": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').privateIPAddresses[0]]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'azure-api.net')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('aiServicesUniqueName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', variables('aiServicesUniqueName')), resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), variables('cognitiveServicesOpenAIUser'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview', 'full').identity.principalId]",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUser'))]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "apimName": {
+      "type": "string",
+      "value": "[variables('apimUniqueName')]"
+    },
+    "apimGatewayUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').gatewayUrl]"
+    },
+    "apimPrivateIp": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview').privateIPAddresses[0]]"
+    },
+    "apimPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimUniqueName')), '2024-06-01-preview', 'full').identity.principalId]"
+    },
+    "foundryEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.cognitiveservices.azure.com', variables('aiServicesUniqueName'))]"
+    }
+  }
+}
