@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Test AI Gateway (Option A): APIM as gateway for AI API calls.
+    Test AI Gateway: APIM Standard v2 + PE for AI API calls.
 .DESCRIPTION
-    Tests APIM AI Gateway directly from inside VNet (Jumpbox via Bastion).
-    Calls OpenAI Chat Completions through APIM with subscription key.
-    Must run from inside VNet (Jumpbox/Bastion or VPN).
+    Tests APIM Standard v2 with Private Endpoint from inside VNet.
+    Calls OpenAI Chat Completions through APIM gateway.
+    Must run from inside VNet (Jumpbox via Bastion).
 .EXAMPLE
     .\14-test-ai-gateway.ps1
 #>
@@ -12,8 +12,8 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  AI Gateway Test (Option A)" -ForegroundColor Cyan
-Write-Host "  APIM as gateway to AI models" -ForegroundColor Cyan
+Write-Host "  AI Gateway Test" -ForegroundColor Cyan
+Write-Host "  APIM Standard v2 + Private Endpoint" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
 # --- Config ---
@@ -216,8 +216,8 @@ Write-Host "  Total: $($pass + $fail)" -ForegroundColor Cyan
 
 if ($fail -eq 0) {
     Write-Host "`n$([char]0x2705) AI Gateway dziala poprawnie!" -ForegroundColor Green
-    Write-Host "  APIM: $apimName (Internal VNet)" -ForegroundColor Gray
-    Write-Host "  Flow: Klient -> APIM (Internal VNet) -> Foundry OpenAI (PE)" -ForegroundColor Gray
+    Write-Host "  APIM: $apimName (Standard v2 + PE)" -ForegroundColor Gray
+    Write-Host "  Flow: Klient -> APIM (Private Endpoint) -> Foundry OpenAI (PE)" -ForegroundColor Gray
 } else {
     Write-Host "`n$([char]0x274C) Niektore testy nie przeszly." -ForegroundColor Red
 }

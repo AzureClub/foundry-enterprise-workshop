@@ -20,7 +20,8 @@
   },
   "apim": {
     "name": "apim-foundry-test-unrkke4ibdxcm",
-    "private_ip": "192.168.2.4"
+    "sku": "StandardV2",
+    "pe_name": "pe-apim-foundry-test-unrkke4ibdxcm"
   },
   "rbac_roles": {
     "cognitive_services_openai_user": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",

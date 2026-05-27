@@ -1,10 +1,11 @@
 <#
 .SYNOPSIS
-    Deploy APIM Developer (Internal VNet) via Bicep.
+    Deploy APIM Standard v2 with Private Endpoint via Bicep.
 .DESCRIPTION
-    Deploys apim.bicep — adds APIM subnet, NSG, APIM instance, DNS, RBAC.
+    Deploys apim.bicep — APIM Standard v2, PE in snet-pe, DNS zone, RBAC.
     Requires main.bicep to be deployed first (existing VNet + Foundry Account).
-    APIM Developer deployment takes 30-45 minutes.
+    Standard v2 is required for the Foundry AI Gateway integration.
+    APIM Standard v2 deployment takes 5-15 minutes.
 #>
 param(
     [Parameter(Mandatory=$false)]
@@ -20,7 +21,7 @@ $location = $config.location
 $bicepDir = "$PSScriptRoot\..\bicep"
 
 Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  DEPLOY APIM (Internal VNet)" -ForegroundColor Cyan
+Write-Host "  DEPLOY APIM Standard v2 + PE" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
 # Verify Foundry resources exist
@@ -39,12 +40,20 @@ if ($LASTEXITCODE -ne 0 -or -not $aiCheck) {
 }
 Write-Host "  Foundry Account: $aiCheck found" -ForegroundColor Green
 
+# Check for existing APIM (Developer tier) and warn
+$existingApim = az apim list --resource-group $rg --query "[0].{name:name,sku:sku.name}" -o json 2>$null | ConvertFrom-Json
+if ($existingApim -and $existingApim.sku -ne 'StandardV2') {
+    Write-Host "  WARNING: Existing APIM '$($existingApim.name)' (SKU: $($existingApim.sku)) detected." -ForegroundColor Yellow
+    Write-Host "  Standard v2 requires a new instance. Delete the old one first." -ForegroundColor Yellow
+    Write-Host ""
+}
+
 $deployCmd = @(
     "az", "deployment", "group", "create",
     "--resource-group", $rg,
     "--template-file", "$bicepDir\apim.bicep",
     "--parameters", "$bicepDir\apim.bicepparam",
-    "--name", "apim-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')",
+    "--name", "apim-stdv2-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')",
     "--verbose"
 )
 
@@ -58,24 +67,30 @@ if ($WhatIf) {
     Write-Host "Running WHAT-IF validation only..." -ForegroundColor Yellow
 }
 
-Write-Host "`nDeploying APIM Bicep template..." -ForegroundColor Yellow
+Write-Host "`nDeploying APIM Standard v2 Bicep template..." -ForegroundColor Yellow
 Write-Host "  Template: $bicepDir\apim.bicep" -ForegroundColor Gray
 Write-Host "  RG: $rg | Region: $location" -ForegroundColor Gray
-Write-Host "  APIM Developer deployment takes 30-45 minutes..." -ForegroundColor Gray
+Write-Host "  SKU: Standard v2 (with Private Endpoint)" -ForegroundColor Gray
+Write-Host "  Deployment takes 5-15 minutes..." -ForegroundColor Gray
 Write-Host ""
 
 $result = & $deployCmd[0] $deployCmd[1..($deployCmd.Length-1)] 2>&1
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0) {
-    Write-Host "`n$([char]0x2705) APIM Deployment SUCCEEDED" -ForegroundColor Green
+    Write-Host "`n$([char]0x2705) APIM Standard v2 Deployment SUCCEEDED" -ForegroundColor Green
     Write-Host "`n--- Deployment Outputs ---" -ForegroundColor Cyan
-    $latestDeploy = az deployment group list --resource-group $rg --query "[?starts_with(name,'apim-deploy')].name | [0]" -o tsv 2>&1
+    $latestDeploy = az deployment group list --resource-group $rg --query "[?starts_with(name,'apim-stdv2-deploy')].name | [0]" -o tsv 2>&1
     if ($latestDeploy) {
         az deployment group show --resource-group $rg --name $latestDeploy --query "properties.outputs" -o json 2>&1
     }
+    Write-Host "`n--- Next Steps ---" -ForegroundColor Cyan
+    Write-Host "  1. Go to Azure AI Foundry Portal > Admin Console > AI Gateway" -ForegroundColor White
+    Write-Host "  2. Select this APIM instance and enable the gateway" -ForegroundColor White
+    Write-Host "  3. Add your Foundry project to the gateway" -ForegroundColor White
+    Write-Host "  4. Run 14-test-ai-gateway.ps1 to verify" -ForegroundColor White
 } else {
-    Write-Host "`n$([char]0x274C) APIM Deployment FAILED" -ForegroundColor Red
+    Write-Host "`n$([char]0x274C) APIM Standard v2 Deployment FAILED" -ForegroundColor Red
     Write-Host $result -ForegroundColor Red
     exit 1
 }

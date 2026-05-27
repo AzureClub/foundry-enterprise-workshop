@@ -1,7 +1,11 @@
 // ============================================================================
-// APIM Developer tier — Internal VNet mode
-// Deploys: NSG, APIM Subnet, APIM, Private DNS (azure-api.net), RBAC
+// APIM Standard v2 — with Private Endpoint for BYO VNet
+// Deploys: APIM Standard v2, Private Endpoint, DNS zone, RBAC
 // Must run AFTER main.bicep (requires existing VNet + Foundry Account)
+//
+// Standard v2 does NOT use VNet injection (no dedicated APIM subnet).
+// Instead, private access is via Private Endpoint in the PE subnet.
+// This tier is required for the Foundry AI Gateway integration.
 // ============================================================================
 
 @description('Azure region')
@@ -17,9 +21,8 @@ param publisherName string = 'Foundry VNet Test'
 @description('Existing VNet name (from main.bicep)')
 param vnetName string = 'vnet-foundry-test'
 
-@description('APIM subnet configuration')
-param apimSubnetName string = 'snet-apim'
-param apimSubnetPrefix string = '192.168.2.0/27'
+@description('PE subnet name — APIM Private Endpoint goes here (from main.bicep)')
+param peSubnetName string = 'snet-pe'
 
 @description('Foundry account name prefix (must match main.bicep)')
 param aiServicesNamePrefix string = 'ai-foundry-byovnet'
@@ -34,6 +37,11 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
   name: vnetName
 }
 
+resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
+  parent: vnet
+  name: peSubnetName
+}
+
 var aiServicesUniqueName = '${aiServicesNamePrefix}-${uniqueSuffix}'
 resource aiServices 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
   name: aiServicesUniqueName
@@ -42,104 +50,14 @@ resource aiServices 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' ex
 var apimUniqueName = '${apimName}-${uniqueSuffix}'
 
 // ============================================================================
-// NSG for APIM subnet (stv2 requirements)
-// ============================================================================
-resource apimNsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
-  name: 'nsg-apim'
-  location: location
-  properties: {
-    securityRules: [
-      {
-        name: 'AllowAPIMManagement'
-        properties: {
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '3443'
-          sourceAddressPrefix: 'ApiManagement'
-          destinationAddressPrefix: 'VirtualNetwork'
-          access: 'Allow'
-          priority: 100
-          direction: 'Inbound'
-        }
-      }
-      {
-        name: 'AllowAzureLoadBalancer'
-        properties: {
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '6390'
-          sourceAddressPrefix: 'AzureLoadBalancer'
-          destinationAddressPrefix: 'VirtualNetwork'
-          access: 'Allow'
-          priority: 110
-          direction: 'Inbound'
-        }
-      }
-      {
-        name: 'AllowVNetHTTPS'
-        properties: {
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '443'
-          sourceAddressPrefix: 'VirtualNetwork'
-          destinationAddressPrefix: 'VirtualNetwork'
-          access: 'Allow'
-          priority: 120
-          direction: 'Inbound'
-        }
-      }
-      {
-        name: 'AllowStorageOutbound'
-        properties: {
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '443'
-          sourceAddressPrefix: 'VirtualNetwork'
-          destinationAddressPrefix: 'Storage'
-          access: 'Allow'
-          priority: 100
-          direction: 'Outbound'
-        }
-      }
-      {
-        name: 'AllowSQLOutbound'
-        properties: {
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '1433'
-          sourceAddressPrefix: 'VirtualNetwork'
-          destinationAddressPrefix: 'Sql'
-          access: 'Allow'
-          priority: 110
-          direction: 'Outbound'
-        }
-      }
-    ]
-  }
-}
-
-// ============================================================================
-// APIM Subnet (added to existing VNet)
-// ============================================================================
-resource apimSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
-  parent: vnet
-  name: apimSubnetName
-  properties: {
-    addressPrefix: apimSubnetPrefix
-    networkSecurityGroup: {
-      id: apimNsg.id
-    }
-  }
-}
-
-// ============================================================================
-// APIM — Developer tier, Internal VNet mode, System MI
+// APIM — Standard v2 (no VNet injection, uses Private Endpoint)
+// Required for Foundry AI Gateway integration
 // ============================================================================
 resource apim 'Microsoft.ApiManagement/service@2024-06-01-preview' = {
   name: apimUniqueName
   location: location
   sku: {
-    name: 'Developer'
+    name: 'StandardV2'
     capacity: 1
   }
   identity: {
@@ -148,18 +66,40 @@ resource apim 'Microsoft.ApiManagement/service@2024-06-01-preview' = {
   properties: {
     publisherEmail: publisherEmail
     publisherName: publisherName
-    virtualNetworkType: 'Internal'
-    virtualNetworkConfiguration: {
-      subnetResourceId: apimSubnet.id
-    }
   }
 }
 
 // ============================================================================
-// Private DNS zone for Internal mode APIM (azure-api.net)
+// Private Endpoint for APIM Gateway (in PE subnet)
+// Allows VNet resources (Foundry agents, jumpbox) to reach APIM privately
+// ============================================================================
+resource apimPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+  name: 'pe-${apimUniqueName}'
+  location: location
+  properties: {
+    subnet: {
+      id: peSubnet.id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'apim-gateway-connection'
+        properties: {
+          privateLinkServiceId: apim.id
+          groupIds: [
+            'Gateway'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+// ============================================================================
+// Private DNS zone: privatelink.azure-api.net
+// Auto-creates A records for APIM gateway PE
 // ============================================================================
 resource apimDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = {
-  name: 'azure-api.net'
+  name: 'privatelink.azure-api.net'
   location: 'global'
 }
 
@@ -175,43 +115,19 @@ resource apimDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024
   }
 }
 
-// Gateway A record
-resource dnsRecordGateway 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-  parent: apimDnsZone
-  name: apimUniqueName
+// DNS zone group — automatically manages A records for the PE
+resource apimPeDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
+  parent: apimPe
+  name: 'apim-dns-zone-group'
   properties: {
-    ttl: 3600
-    aRecords: [{ ipv4Address: apim.properties.privateIPAddresses[0] }]
-  }
-}
-
-// Developer Portal A record
-resource dnsRecordDeveloper 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-  parent: apimDnsZone
-  name: '${apimUniqueName}.developer'
-  properties: {
-    ttl: 3600
-    aRecords: [{ ipv4Address: apim.properties.privateIPAddresses[0] }]
-  }
-}
-
-// Management A record
-resource dnsRecordManagement 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-  parent: apimDnsZone
-  name: '${apimUniqueName}.management'
-  properties: {
-    ttl: 3600
-    aRecords: [{ ipv4Address: apim.properties.privateIPAddresses[0] }]
-  }
-}
-
-// SCM A record
-resource dnsRecordScm 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-  parent: apimDnsZone
-  name: '${apimUniqueName}.scm'
-  properties: {
-    ttl: 3600
-    aRecords: [{ ipv4Address: apim.properties.privateIPAddresses[0] }]
+    privateDnsZoneConfigs: [
+      {
+        name: 'privatelink-azure-api-net'
+        properties: {
+          privateDnsZoneId: apimDnsZone.id
+        }
+      }
+    ]
   }
 }
 
@@ -220,7 +136,6 @@ resource dnsRecordScm 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
 // ============================================================================
 var cognitiveServicesOpenAIUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 
-// OpenAI inference (chat completions)
 resource apimCogServicesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(aiServices.id, apim.id, cognitiveServicesOpenAIUser)
   scope: aiServices
@@ -236,6 +151,6 @@ resource apimCogServicesRole 'Microsoft.Authorization/roleAssignments@2022-04-01
 // ============================================================================
 output apimName string = apim.name
 output apimGatewayUrl string = apim.properties.gatewayUrl
-output apimPrivateIp string = apim.properties.privateIPAddresses[0]
 output apimPrincipalId string = apim.identity.principalId
+output apimPrivateEndpointName string = apimPe.name
 output foundryEndpoint string = 'https://${aiServicesUniqueName}.cognitiveservices.azure.com'
