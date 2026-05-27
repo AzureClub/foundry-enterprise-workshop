@@ -21,7 +21,7 @@
 5. Jak wystawić modele przez API Management w sieci wewnętrznej
 6. Jakie role RBAC są wymagane i dlaczego
 7. Jak zbudować izolację multi-tenant per-projekt
-8. Jak skonfigurować APIM jako AI Gateway (Opcja A) lub BYOM dla agentów Foundry (Opcja B)
+8. Jak skonfigurować Foundry AI Gateway (Opcja A, APIM v2) lub APIM Standalone Proxy (Opcja B)
 
 ### 💰 Szacunkowe koszty warsztatu
 
@@ -51,8 +51,8 @@
 | 1:30 | **Faza 7b** | **⭐ Multi-tenant izolacja per-projekt** |
 | 2:00 | Faza 8 | APIM deploy (opcja, 45 min) |
 | 2:45 | **Faza 8b** | **⭐ APIM + AI — wybierz ścieżkę** (20 min) |
-| | ↳ Opcja A | AI Gateway (standardowy) — APIM jako gateway do AI |
-| | ↳ Opcja B | BYOM — agent Foundry przez APIM (Std v2/Premium) |
+| | ↳ Opcja A | Foundry AI Gateway (APIM v2) — natywna integracja |
+| | ↳ Opcja B | APIM Standalone Proxy (wszystkie tiery) |
 | 3:00 | Faza 9 | Raport GO/NO-GO |
 | 3:15 | Cleanup | Usunięcie zasobów |
 | 3:30 | Q&A | Pytania i odpowiedzi |
@@ -1115,44 +1115,144 @@ az ad user delete --id $labUser
 
 ## 🔗 Faza 8b: APIM jako AI Gateway — wybierz ścieżkę (20 min)
 
-> ℹ️ Ta faza wymaga ukończenia Fazy 8 (APIM musi być wdrożony z zaimportowanym API).
+> ℹ️ Ta faza wymaga ukończenia Fazy 8 (APIM musi być wdrożony).
 
-W zależności od wymagań klienta i posiadanego tieru APIM, wybierz jedną ze ścieżek:
+W zależności od wymagań klienta, budżetu i tieru APIM, wybierz jedną ze ścieżek:
 
 ### Która opcja dla Ciebie?
 
-| | **Opcja A: AI Gateway (standardowy)** | **Opcja B: BYOM (Bring Your Own AI Gateway)** |
+| | **Opcja A: Foundry AI Gateway** | **Opcja B: APIM Standalone Proxy** |
 |---|---|---|
-| **Opis** | APIM jako gateway do AI API — klienci łączą się przez APIM | Agenty Foundry używają modeli przez APIM (connection w projekcie) |
-| **APIM Tier** | **Wszystkie** (Developer, Basic, Standard, Premium, v2) | **Standard v2 / Premium** (oficjalnie) |
-| **Konfiguracja** | Import API z portalu Azure + policies | Connection + subscription key + CLI/Bicep |
-| **Kto konsumuje** | Aplikacje klienckie, inne serwisy | Agenty w Foundry Agent Service |
-| **Izolacja sieciowa** | APIM Internal/External VNet + PE do backendu | Private Endpoint do APIM + PE do modeli ([Template 16](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup)) |
-| **Funkcje AI** | Token limiting, semantic caching, content safety, load balancing | Rate limiting, monitoring (ręczne policies) |
-| **Portal** | Azure Portal → APIM → APIs | Foundry Portal → Admin connected models (CLI/Bicep) |
-| **Koszt** | Od ~$50/mies. (Developer) | Od ~$280/mies. (Standard v2) |
-| **Scenariusz** | PoC, dev/test, standardowe AI API | Enterprise z agentami Foundry + pełną kontrolą |
+| **Opis** | APIM zintegrowany z Foundry — **cały ruch** z Foundry automatycznie przechodzi przez APIM | APIM jako samodzielny proxy — klienci wołają APIM bezpośrednio |
+| **APIM Tier** | **Tylko v2** (Basic v2, Standard v2, Premium v2) | **Wszystkie** (Developer, Basic, Standard, Premium, v2) |
+| **Konfiguracja** | Foundry Portal → Admin Console → AI Gateway | Import API z portalu Azure + policies |
+| **Co daje** | Token limits per projekt, governance, BYOM dla agentów | Rate limiting, caching, monitoring — ręczne policies |
+| **Kto konsumuje** | Foundry (modele, agenty, narzędzia) — automatycznie | Aplikacje klienckie (bezpośrednie wywołania API) |
+| **Private Network** | Standard v2 (PE) lub Premium v2 (VNet injection) | Developer (Internal VNet), Premium (VNet), Standard v2 (PE) |
+| **Koszt APIM** | Od ~$280/mies. (Standard v2) | Od ~$50/mies. (Developer) |
+| **Scenariusz** | Enterprise governance, multi-team, produkcja | PoC, dev/test, standalone API gateway |
 
 > 📎 **Dokumentacja:**
+> - [Foundry AI Gateway — konfiguracja z portalu](https://learn.microsoft.com/en-us/azure/foundry/configuration/enable-ai-api-management-gateway-portal) — **Wymaga: v2 tiers**
 > - [AI Gateway capabilities in APIM](https://learn.microsoft.com/en-us/azure/api-management/genai-gateway-capabilities) — **Applies to: All tiers**
 > - [Import Microsoft Foundry API to APIM](https://learn.microsoft.com/en-us/azure/api-management/azure-ai-foundry-api) — **Applies to: All tiers**
-> - [BYOM / AI Gateway w Foundry](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/ai-gateway) — **Wymaga: Standard v2 / Premium**
+> - [BYOM / AI Gateway w Foundry Agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/ai-gateway) — **Wymaga: Standard v2 / Premium**
 > - [APIM + ModelGateway Integration Guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md)
 > - [Template 16: Private APIM + BYO VNet](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup)
 
 ---
 
-### 🅰️ Opcja A: AI Gateway (standardowy) — APIM jako gateway do AI API
+### 🅰️ Opcja A: Foundry AI Gateway (wymaga APIM v2)
 
-> 📘 **Kiedy wybrać?** Gdy chcesz zarządzać dostępem do modeli AI przez APIM
-> dla aplikacji klienckich (nie agentów Foundry). Działa na **wszystkich tierach APIM**,
-> w tym Developer (~$50/mies.).
+> 📘 **Co to jest?** Foundry AI Gateway to natywna integracja APIM z Foundry.
+> Po włączeniu, **cały ruch z Foundry** (modele, agenty, narzędzia) automatycznie
+> przechodzi przez APIM. Daje token limits per projekt, governance i monitoring.
+>
+> ⚠️ **Wymaga APIM w tierze v2** (Basic v2, Standard v2, Premium v2).
+> APIM Developer/Classic **nie pojawi się** w portalu Foundry.
+>
+> Dla private network (BYO VNet): **Standard v2** z Private Endpoint
+> lub **Premium v2** z VNet injection.
+>
+> 📎 [Konfiguracja AI Gateway](https://learn.microsoft.com/en-us/azure/foundry/configuration/enable-ai-api-management-gateway-portal)
 
-> 🖥️ **Wymagane:** Testy Opcji A (skrypt `14-test-ai-gateway.ps1`) muszą być uruchomione
+> 🖥️ **Wymagane:** Konfiguracja AI Gateway odbywa się z **portalu Foundry** (`ai.azure.com`).
+> Dla BYO VNet musisz to robić z **Jumpbox VM** przez Bastion.
+> Jeśli nie masz przygotowanego Jumpboxa, wróć do **Krok 7.2b**.
+
+#### Architektura Foundry AI Gateway
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Foundry                                                         │
+│                                                                   │
+│  ┌──────────────┐    ┌──────────────────┐    ┌──────────────────┐│
+│  │ Model / Agent│───►│ AI Gateway       │───►│ AI Backend       ││
+│  │ (projekt)    │    │ (APIM Std v2)    │    │ (OpenAI, inne)   ││
+│  │              │    │ Token limits     │    │                  ││
+│  │              │    │ Governance       │    │                  ││
+│  └──────────────┘    └──────────────────┘    └──────────────────┘│
+│                                                                   │
+│  Automatycznie: cały ruch z Foundry → APIM → backend             │
+│  Per-projekt: token limits (TPM), quotas, monitoring              │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Wymagania APIM tier dla AI Gateway
+
+| Tier | AI Gateway | Private Endpoint | VNet injection | Koszt |
+|------|:----------:|:----------------:|:--------------:|-------|
+| Developer (v1) | ❌ | ❌ | Internal* | ~$50/mies. |
+| Basic (v1) | ❌ | ❌ | ❌ | ~$50/mies. |
+| Standard (v1) | ❌ | ❌ | ❌ | ~$225/mies. |
+| Premium (v1) | ❌ | ❌ | ✅ | ~$2800/mies. |
+| **Basic v2** | ✅ | ❌ | ❌ | ~$280/mies. |
+| **Standard v2** | ✅ | ✅ | ❌ | ~$280/mies. |
+| **Premium v2** | ✅ | ✅ | ✅ | ~$700/mies.+ |
+
+> \* Developer Internal VNet jest do dev/test, nie produkcji.
+> Dla BYO VNet z private network potrzebujesz **Standard v2** (minimum) lub **Premium v2**.
+
+#### Krok A.1: Deploy APIM Standard v2
+
+Warsztat zmienia APIM z Developer na **Standard v2** z Private Endpoint:
+
+```powershell
+# Deploy APIM Standard v2 (Gateway V2)
+# UWAGA: zmiana APIM z Developer na Standard v2 może trwać 30-45 minut
+.\scripts\02-deploy-apim.ps1 -ApimSku "StandardV2"
+```
+
+> ⚠️ **Jeśli klient nie chce kosztów Standard v2 (~$280/mies.)**, zostań przy Developer
+> i przejdź do **Opcji B** (standalone proxy). AI Gateway wymaga v2.
+
+#### Krok A.2: Włącz AI Gateway w portalu Foundry
+
+Na **Jumpbox VM** (przez Bastion):
+
+1. Otwórz **https://ai.azure.com** → zaloguj się
+2. Przejdź do **Operate** → **Admin console**
+3. Otwórz zakładkę **AI Gateway**
+4. Kliknij **Add AI Gateway**
+5. Wybierz swój Foundry resource
+6. Wybierz **Use existing** → wybierz APIM Standard v2
+7. Nadaj nazwę gateway i kliknij **Add**
+8. Poczekaj na status **Enabled** (5-10 min)
+
+#### Krok A.3: Włącz AI Gateway dla projektu
+
+1. W zakładce AI Gateway kliknij na nazwę gateway
+2. Na liście projektów znajdź `project-agent-test`
+3. Kliknij **Add project to gateway**
+4. Status zmieni się na **Enabled**
+
+#### Krok A.4: Weryfikacja
+
+1. Azure Portal → APIM → **Monitoring** → **Metrics** → **Requests**
+2. Wyślij test z portalu Foundry (agent lub playground)
+3. Sprawdź czy request count rośnie w metrykach APIM
+4. Opcjonalnie: **Monitoring** → **Logs** → query `GatewayLogs`
+
+#### Krok A.5: Skonfiguruj token limits (opcjonalnie)
+
+W Foundry Admin Console → AI Gateway:
+- Ustaw TPM (tokens per minute) limit per projekt
+- Ustaw quotę dzienną/tygodniową per projekt
+- Po przekroczeniu limitu APIM zwraca `429 Too Many Requests`
+
+---
+
+### 🅱️ Opcja B: APIM Standalone Proxy (działa na wszystkich tierach)
+
+> 📘 **Kiedy wybrać?** Gdy nie potrzebujesz natywnej integracji Foundry AI Gateway
+> lub masz APIM Developer/Classic tier i nie chcesz kosztów v2.
+> APIM działa jako **samodzielny proxy** do AI API — klienci wołają APIM bezpośrednio.
+
+> 🖥️ **Wymagane:** Testy (skrypt `14-test-ai-gateway.ps1`) muszą być uruchomione
 > **z Jumpbox VM** przez Bastion — APIM w trybie Internal VNet jest dostępny tylko z wnętrza sieci.
 > Jeśli nie masz jeszcze przygotowanego Jumpboxa, wróć do **Krok 7.2b**.
 
-#### Architektura
+#### Architektura Standalone Proxy
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -1169,49 +1269,38 @@ W zależności od wymagań klienta i posiadanego tieru APIM, wybierz jedną ze �
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-#### Wspierane tiery APIM i funkcje AI Gateway
-
-| Funkcja | Developer | Basic | Standard | Premium | Basic v2 | Standard v2 | Premium v2 |
-|---------|:---------:|:-----:|:--------:|:-------:|:--------:|:-----------:|:----------:|
-| Import Foundry API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Token rate limiting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Token metrics (emit) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Load balancing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Content safety | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Semantic caching | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Anthropic Messages API | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| MCP server support | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| VNet integration | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| Internal VNet mode | Dev* | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
-
-> \* Developer tier wspiera Internal VNet mode, ale nie jest przeznaczony do produkcji.
-
-> 📎 Źródło: [GenAI Gateway Capabilities](https://learn.microsoft.com/en-us/azure/api-management/genai-gateway-capabilities)
-
-#### Krok A.1: Import API (już wykonany w Fazie 8)
+#### Krok B.1: Import API (już wykonany w Fazie 8)
 
 API OpenAI zostało już zaimportowane w Fazie 8 przez skrypt `03-import-openapi-mcp.ps1`.
 
-#### Krok A.2: Test AI Gateway
+#### Krok B.2: Test APIM Standalone Proxy
 
-Przetestuj endpoint APIM bezpośrednio (z Jumpboxa):
+Z Jumpboxa:
 
 ```powershell
-# Token do APIM (subscription key)
-$apimUrl = "https://<apim-name>.azure-api.net/openai/deployments/gpt-4.1/chat/completions?api-version=2024-12-01-preview"
-$subKey = "<subscription-key>"
-
-$body = @{
-    messages = @(@{ role = "user"; content = "Czym jest Azure?" })
-    max_tokens = 100
-} | ConvertTo-Json -Depth 3
-
-Invoke-RestMethod -Uri $apimUrl -Method POST `
-    -Headers @{ "Ocp-Apim-Subscription-Key" = $subKey; "Content-Type" = "application/json" } `
-    -Body $body
+.\scripts\14-test-ai-gateway.ps1
 ```
 
-#### Krok A.3: Sprawdź metryki w APIM
+#### Oczekiwany wynik (6 testów)
+
+```
+========================================
+  AI Gateway Test (Option B)
+  APIM as gateway to AI models
+========================================
+  ✅ PASS: DNS resolves apim-xxx.azure-api.net (IP: 192.168.2.4)
+  ✅ PASS: TCP 443 to APIM
+  ✅ PASS: Chat Completions via APIM (Model: gpt-4.1, Tokens: 70, Latency: 4293ms)
+  ✅ PASS: Streaming response (22 chunks)
+  ✅ PASS: Error on invalid model (HTTP 404)
+  ✅ PASS: Rejected without subscription key (HTTP 401)
+========================================
+  ✅ PASS: 6   Total: 6
+✅ AI Gateway dziala poprawnie!
+  Flow: Klient -> APIM (Internal VNet) -> Foundry OpenAI (PE)
+```
+
+#### Krok B.3: Sprawdź metryki w APIM
 
 1. Azure Portal → APIM → **Analytics**
 2. Sprawdź: liczba requestów, latency, token usage
@@ -1219,141 +1308,51 @@ Invoke-RestMethod -Uri $apimUrl -Method POST `
 
 ---
 
-### 🅱️ Opcja B: BYOM — Bring Your Own AI Gateway to Foundry
+### Znane ograniczenia
 
-> 📘 **Kiedy wybrać?** Gdy chcesz, aby **agenty w Foundry Agent Service** korzystały
-> z modeli przez APIM. Daje pełną kontrolę nad routingiem modeli dla agentów.
->
-> **⚠️ Wymaga APIM Standard v2 lub Premium** — APIM Developer tier:
-> - ✅ Connection i konfigurację można utworzyć (CLI/Bicep)
-> - ❌ Agent runtime nie może połączyć się z APIM (brak Private Endpoint)
->
-> 📎 [Current Limitations](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md#-current-limitations)
+> 📋 **Źródła:**
+> - [Foundry AI Gateway — konfiguracja](https://learn.microsoft.com/en-us/azure/foundry/configuration/enable-ai-api-management-gateway-portal)
+> - [APIM & ModelGateway Integration Guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md#-current-limitations)
 
-#### Architektura BYOM (Standard v2 / Premium)
+#### 1. Foundry AI Gateway wymaga APIM v2
 
+Portal Foundry → Admin Console → AI Gateway:
+- ✅ Widzi tylko APIM w tierach **v2** (Basic v2, Standard v2, Premium v2)
+- ❌ **NIE widzi** APIM Developer, Basic, Standard, Premium (tiery classic/v1)
+- ❌ NIE widzi APIM już skojarzonego z innym AI Gateway
+
+#### 2. Private Network wymaga Standard v2+
+
+Jeśli Foundry ma wyłączony public access (BYO VNet):
+- ❌ Basic v2 — brak Private Endpoint
+- ✅ **Standard v2** z Private Endpoint — najtańsza opcja
+- ✅ **Premium v2** z VNet injection lub Private Endpoint
+
+#### 3. APIM Internal VNet mode a BYOM
+
+Foundry Agent Service runtime łączy się z APIM przez **Private Endpoint**, nie VNet:
+- ❌ **APIM Internal VNet mode NIE działa** z BYOM (agent nie rozwiąże DNS)
+- ✅ APIM z **Private Endpoint** (Standard v2/Premium v2) — wspierane
+- ✅ APIM **publiczny** — działa, ale ruch wychodzi z VNet
+
+Błąd przy Internal VNet:
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  VNet (BYO)                                                      │
-│                                                                   │
-│  ┌──────────────┐    ┌─────────────────┐    ┌──────────────────┐ │
-│  │ Agent Runtime │───►│ Private Endpoint│───►│ APIM             │ │
-│  │ (snet-agent)  │    │ (snet-pe)       │    │ (Standard v2)    │ │
-│  │ Container App │    │ privatelink.    │    │ + AI policies    │ │
-│  │               │    │ azure-api.net   │    │                  │ │
-│  └──────────────┘    └─────────────────┘    └──────────────────┘ │
-│       │                                            │              │
-│       │  Connection:                         ┌─────▼────────┐    │
-│       │  apim-openai-gw                      │ Foundry       │    │
-│       │  model: connection/gpt-4.1           │ OpenAI (PE)   │    │
-│       │                                      └──────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-#### Krok B.1: Konfiguracja BYOM
-
-Skrypt automatycznie:
-- Włącza subscription key na API OpenAI w APIM
-- Tworzy dedykowaną subskrypcję APIM dla ruchu agentów
-- Tworzy connection `apim-openai-gateway` w projekcie Foundry
-
-```powershell
-.\scripts\11-configure-byom.ps1
+model_error: Name or service not known (apim-xxx.azure-api.net:443)
 ```
 
-> 💡 Domyślnie konfiguruje projekt `project-agent-test`. Dla innego projektu:
-> ```powershell
-> .\scripts\11-configure-byom.ps1 -ProjectName "project-lab01"
-> ```
+#### 4. Portal "Admin connected models" a Internal VNet APIM
 
-#### Krok B.2: Walidacja BYOM
-
-```powershell
-.\scripts\12-test-byom.ps1
-```
-
-#### Oczekiwany wynik (12 testów)
-
-```
-========================================
-  TEST: BYOM Configuration
-========================================
---- APIM Subscription ---
-  ✅ PASS: APIM subscription 'foundry-byom' exists
-  ✅ PASS: APIM subscription key available
---- APIM API Configuration ---
-  ✅ PASS: OpenAI API requires subscription key
---- Foundry Project Connection ---
-  ✅ PASS: Connection 'apim-openai-gateway' exists
-  ✅ PASS: Connection category is 'ApiManagement'
-  ✅ PASS: Connection target matches APIM
-  ✅ PASS: Connection auth type is 'ApiKey'
---- APIM Backend Policy ---
-  ✅ PASS: APIM policy: set-backend-service configured
-  ✅ PASS: APIM policy: MI authentication enabled
---- RBAC Verification ---
-  ✅ PASS: APIM MI has 'Cognitive Services OpenAI User' role
---- Network Path ---
-  ✅ PASS: APIM is in VNet mode
-  ✅ PASS: Connection metadata references APIM resource
-========================================
-  BYOM TEST RESULTS
-========================================
-  ✅ PASS: 12
-  Total: 12
-✅ BYOM ready! Use model: apim-openai-gateway/gpt-4.1
-```
-
-#### Krok B.3: Test E2E agenta z BYOM (wymaga Standard v2/Premium)
-
-```powershell
-# Z Jumpboxa (wewnątrz VNet):
-.\scripts\13-test-byom-e2e.ps1
-```
-
-> ⚠️ **Z APIM Developer/Internal VNet** ten test zwróci błąd DNS:
-> ```
-> model_error: Name or service not known (apim-xxx.azure-api.net:443)
-> ```
-> To potwierdza, że agent runtime nie może osiągnąć APIM w trybie Internal VNet.
-> Aby E2E test przeszedł, potrzebujesz APIM **Standard v2/Premium** z Private Endpoint.
-
----
-
-### Znane ograniczenia BYOM + Private Network
-
-> 📋 **Źródło:** [APIM & ModelGateway Integration Guide — Current Limitations](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md#-current-limitations)
-
-#### 1. APIM Tier: tylko Standard v2 i Premium
-
-BYOM oficjalnie wspiera **tylko APIM Standard v2 i Premium**. APIM Developer tier:
-- ✅ Connection do Foundry można utworzyć (CLI/Bicep)
-- ✅ Agent widzi model w konfiguracji
-- ❌ **Private Endpoint do APIM nie jest wspierany** — agent runtime nie może połączyć się z APIM w prywatnej sieci
-- ❌ Brak wsparcia w portalu "Admin connected models"
-
-#### 2. APIM Internal VNet mode a BYOM
-
-Foundry Agent Service runtime (Container App w BYO VNet) łączy się z APIM przez **Private Endpoint**, a nie bezpośrednio przez VNet. Dlatego:
-- ❌ **APIM Internal VNet mode NIE działa** z BYOM — agent nie może rozwiązać DNS APIM
-- ✅ APIM z **Private Endpoint** (Standard v2/Premium) — oficjalnie wspierany
-- ✅ APIM **publiczny** (bez VNet) — działa, ale ruch wychodzi z VNet
-
-#### 3. Portal "Admin connected models" a Internal VNet APIM
-
-Portal Foundry (`ai.azure.com` → Admin console → Admin-connected models):
+Portal Foundry → Admin console → Admin-connected models:
 - ❌ **Nie widzi APIM w trybie Internal VNet** (brak publicznego data-plane)
 - ✅ Widzi APIM bez VNet lub z External VNet mode
 - ✅ CLI/Bicep działa niezależnie od trybu VNet
 
-#### 4. Referencyjny template dla pełnej izolacji
-
-Aby wdrożyć BYOM z pełną izolacją sieciową, użyj oficjalnego template:
+#### 5. Referencyjny template dla pełnej izolacji
 
 📎 [Template 16: Private Network Standard Agent + APIM Setup](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup)
 
 **Wymagania:**
-- APIM **Standard v2** lub **Premium** (Private Endpoint support)
+- APIM **Standard v2** lub **Premium v2** (Private Endpoint support)
 - Private DNS zone: `privatelink.azure-api.net` zlinkowana do VNet
 - RBAC: Foundry Account MI + Project MI → `API Management Service Reader` na APIM
 
