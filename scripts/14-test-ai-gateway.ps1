@@ -91,7 +91,7 @@ try {
 
 # --- Step 5: Chat Completions (simple) ---
 Write-Host "`n--- Test 3: Chat Completions ---" -ForegroundColor Yellow
-$chatUrl = "$gatewayUrl/deployments/gpt-4.1/chat/completions?api-version=2024-12-01-preview"
+$chatUrl = "$gatewayUrl/openai/deployments/gpt-4.1/chat/completions?api-version=2024-12-01-preview"
 $chatBody = @{
     messages = @(
         @{ role = "system"; content = "You are a helpful assistant. Reply in Polish, one sentence max." }
@@ -173,7 +173,7 @@ try {
 
 # --- Step 7: Error handling (invalid model) ---
 Write-Host "`n--- Test 5: Error Handling ---" -ForegroundColor Yellow
-$badUrl = "$gatewayUrl/deployments/nonexistent-model/chat/completions?api-version=2024-12-01-preview"
+$badUrl = "$gatewayUrl/openai/deployments/nonexistent-model/chat/completions?api-version=2024-12-01-preview"
 $badBody = '{"messages":[{"role":"user","content":"test"}]}'
 try {
     Invoke-RestMethod -Uri $badUrl -Method POST -Headers $headers -Body $badBody -ErrorAction Stop
