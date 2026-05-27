@@ -38,7 +38,7 @@ Write-Host "1. Creating Prompt Agent with model: $modelName" -ForegroundColor Ye
 $agentBody = @{
     name = "test-byom-agent"
     definition = @{
-        type = "prompt"
+        kind = "prompt"
         model = $modelName
         instructions = "You are a helpful assistant. Reply briefly in Polish."
     }
