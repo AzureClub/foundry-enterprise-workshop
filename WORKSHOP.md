@@ -7,7 +7,7 @@
 
 | | |
 |---|---|
-| **Czas trwania** | ~2.5-3.5 godziny |
+| **Czas trwania** | ~3-3.5 godziny |
 | **Poziom** | Intermediate |
 | **Wymagania** | Azure CLI, subskrypcja Azure, uprawnienia Owner |
 | **Rezultat** | Działające środowisko AI Foundry w prywatnej sieci VNet z pełną izolacją |
@@ -21,6 +21,7 @@
 5. Jak wystawić modele przez API Management w sieci wewnętrznej
 6. Jakie role RBAC są wymagane i dlaczego
 7. Jak zbudować izolację multi-tenant per-projekt
+8. Jak skonfigurować BYOM (Bring Your Own Model) — agenty AI korzystające z modeli przez APIM
 
 ### 💰 Szacunkowe koszty warsztatu
 
@@ -49,9 +50,10 @@
 | 1:15 | Faza 7 | Tworzenie agenta, test izolacji |
 | 1:30 | **Faza 7b** | **⭐ Multi-tenant izolacja per-projekt** |
 | 2:00 | Faza 8 | APIM deploy (opcja, 45 min) |
-| 2:30 | Faza 9 | Raport GO/NO-GO |
-| 2:45 | Cleanup | Usunięcie zasobów |
-| 3:00 | Q&A | Pytania i odpowiedzi |
+| 2:45 | **Faza 8b** | **⭐ BYOM — agent przez APIM** (15 min) |
+| 3:00 | Faza 9 | Raport GO/NO-GO |
+| 3:15 | Cleanup | Usunięcie zasobów |
+| 3:30 | Q&A | Pytania i odpowiedzi |
 
 ---
 
@@ -1066,6 +1068,126 @@ az ad user delete --id $labUser
 
 ---
 
+## 🔗 Faza 8b: BYOM — Bring Your Own Model przez APIM (15 min)
+
+> ℹ️ Ta faza wymaga ukończenia Fazy 8 (APIM musi być wdrożony z zaimportowanym API).
+
+> 📘 **Po co BYOM?** Domyślnie agent w Foundry łączy się z modelem bezpośrednio.
+> BYOM (Bring Your Own Model) pozwala przekierować ruch agenta przez APIM,
+> co daje Ci pełną kontrolę: rate limiting, logowanie, metryki kosztów, routing między modelami.
+>
+> **Ważne:** BYOM działa z **dowolną wersją APIM** (v1 Developer, Standard, Premium).
+> Nie wymaga APIM v2 — to odróżnia BYOM od funkcji „AI Gateway",
+> która wymaga APIM v2 (Basic v2, Standard v2, Premium v2).
+>
+> 📎 **Dokumentacja:** [BYOM — Bring Your Own Model](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/bring-your-own-model)
+
+### Architektura BYOM
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  VNet (192.168.0.0/16)                                      │
+│                                                              │
+│  ┌──────────────┐    ┌──────────────────┐    ┌────────────┐ │
+│  │ Agent Service │───►│ APIM (Internal)  │───►│ Foundry    │ │
+│  │ (snet-agent)  │    │ (snet-apim)      │    │ OpenAI     │ │
+│  │               │    │ 192.168.2.4      │    │ (PE)       │ │
+│  └──────────────┘    └──────────────────┘    └────────────┘ │
+│       │                    │                                  │
+│       │  Connection:       │  Policy:                        │
+│       │  apim-openai-gw    │  MI auth + backend rewrite      │
+│       │  (API Key)         │                                  │
+└───────┴────────────────────┴──────────────────────────────────┘
+```
+
+**Flow ruchu:**
+1. Agent używa modelu `apim-openai-gateway/gpt-4.1`
+2. Foundry kieruje request do APIM (connection z API Key)
+3. APIM autentykuje się do Foundry OpenAI przez Managed Identity
+4. Cały ruch pozostaje w VNet — bez publicznego internetu
+
+### BYOM vs AI Gateway
+
+| | **BYOM (ten warsztat)** | **AI Gateway** |
+|---|---|---|
+| **Wymaga APIM** | v1 (Developer, Standard, Premium) | **v2 tylko** (Basic v2, Standard v2, Premium v2) |
+| **Konfiguracja** | Connection + subscription key | Automatyczna integracja z portalu |
+| **Rate limiting** | Ręczna policy w APIM | Wbudowane token limity |
+| **Monitoring** | APIM Analytics / App Insights | AI Gateway Dashboard |
+| **Koszt APIM** | ~$50/mies. (Developer) | ~$280/mies.+ (Basic v2) |
+| **Scenariusz** | PoC, dev/test, mniejsze wdrożenia | Produkcja z governance |
+
+### Krok 8b.1: Konfiguracja BYOM
+
+Skrypt automatycznie:
+- Włącza subscription key na API OpenAI w APIM
+- Tworzy dedykowaną subskrypcję APIM dla ruchu agentów
+- Tworzy connection `apim-openai-gateway` w projekcie Foundry
+
+```powershell
+.\scripts\11-configure-byom.ps1
+```
+
+> 💡 Domyślnie konfiguruje projekt `project-agent-test`. Dla innego projektu:
+> ```powershell
+> .\scripts\11-configure-byom.ps1 -ProjectName "project-lab01"
+> ```
+
+### Krok 8b.2: Walidacja BYOM
+
+```powershell
+.\scripts\12-test-byom.ps1
+```
+
+### Oczekiwany wynik (12 testów)
+
+```
+========================================
+  TEST: BYOM Configuration
+========================================
+--- APIM Subscription ---
+  ✅ PASS: APIM subscription 'foundry-byom' exists
+  ✅ PASS: APIM subscription key available
+--- APIM API Configuration ---
+  ✅ PASS: OpenAI API requires subscription key
+--- Foundry Project Connection ---
+  ✅ PASS: Connection 'apim-openai-gateway' exists
+  ✅ PASS: Connection category is 'ApiManagement'
+  ✅ PASS: Connection target matches APIM
+  ✅ PASS: Connection auth type is 'ApiKey'
+--- APIM Backend Policy ---
+  ✅ PASS: APIM policy: set-backend-service configured
+  ✅ PASS: APIM policy: MI authentication enabled
+--- RBAC Verification ---
+  ✅ PASS: APIM MI has 'Cognitive Services OpenAI User' role
+--- Network Path ---
+  ✅ PASS: APIM is in VNet mode
+  ✅ PASS: Connection metadata references APIM resource
+========================================
+  BYOM TEST RESULTS
+========================================
+  ✅ PASS: 12
+  Total: 12
+✅ BYOM ready! Use model: apim-openai-gateway/gpt-4.1
+```
+
+### Krok 8b.3: Test agenta z BYOM (z portalu)
+
+1. Otwórz portal **ai.azure.com** przez Bastion lub VPN
+2. Przejdź do projektu `project-agent-test`
+3. Utwórz nowego agenta
+4. W polu **Model** wybierz: `apim-openai-gateway/gpt-4.1`
+5. Wyślij wiadomość testową i zweryfikuj odpowiedź
+6. Sprawdź logi APIM — zobaczysz request z agenta
+
+> 🔒 **Izolacja sieciowa**: Agent → APIM (Internal VNet) → Foundry OpenAI (Private Endpoint).
+> Żaden request nie przechodzi przez publiczny internet.
+
+> ⚠️ **Uwaga:** Jeśli model `apim-openai-gateway/gpt-4.1` nie pojawia się na liście,
+> poczekaj ~2 minuty — propagacja connection może chwilę trwać.
+
+---
+
 ## 📊 Faza 9: Raport końcowy (2 min)
 
 Generujemy podsumowanie wszystkich testów.
@@ -1156,6 +1278,8 @@ az cognitiveservices account purge --name $aiName --resource-group $rg --locatio
 | **Azure Bastion** | [Bastion overview](https://learn.microsoft.com/en-us/azure/bastion/bastion-overview) |
 | **VPN P2S — konfiguracja** | [Point-to-Site VPN](https://learn.microsoft.com/en-us/azure/vpn-gateway/vpn-gateway-howto-point-to-site-resource-manager-portal) |
 | **APIM Internal VNet** | [VNet integration](https://learn.microsoft.com/en-us/azure/api-management/api-management-using-with-internal-vnet) |
+| **BYOM — Bring Your Own Model** | [Agent z modelem przez APIM](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/bring-your-own-model) |
+| **APIM AI Gateway (v2)** | [AI Gateway integration](https://learn.microsoft.com/en-us/azure/foundry/configuration/enable-ai-api-management-gateway-portal) |
 | **CosmosDB data plane RBAC** | [RBAC for Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-setup-rbac) |
 
 ### Oficjalny template Bicep
@@ -1172,9 +1296,11 @@ az cognitiveservices account purge --name $aiName --resource-group $rg --locatio
 | **Storage connection** | Kategoria musi być `AzureStorageAccount` (nie `AzureBlob`) | Sprawdź Bicep template |
 | **subnetArmId** | Dynamiczne `subnet[0].id` odrzucane | Użyj `resourceId()` |
 | **Class A addresses** | `10.0.0.0/8` może nie działać we wszystkich regionach | Użyj `192.168.0.0/16` lub `172.16.0.0/12` |
+| **BYOM connection propagation** | Connection `ApiManagement` potrzebuje ~2 min na propagację | Odczekaj przed tworzeniem agenta z BYOM modelem |
+| **BYOM vs AI Gateway** | AI Gateway wymaga APIM v2, BYOM działa z v1 | Użyj BYOM dla dev/test na APIM Developer |
 
 ---
 
 ---
 
-*Warsztat opracowany na podstawie testów przeprowadzonych w maju 2025. Sprawdź dokumentację Microsoft pod kątem zmian.*
+*Warsztat opracowany na podstawie testów przeprowadzonych w maju 2025, zaktualizowany w maju 2026 o sekcję BYOM. Sprawdź dokumentację Microsoft pod kątem zmian.*
