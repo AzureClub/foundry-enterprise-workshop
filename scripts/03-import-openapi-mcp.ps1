@@ -103,7 +103,7 @@ az apim api import `
     --specification-path $specFile `
     --display-name "Azure OpenAI Chat Completions" `
     --protocols https `
-    --subscription-required $false `
+    --subscription-required true `
     -o none 2>&1
 
 if ($LASTEXITCODE -eq 0) {
