@@ -1076,11 +1076,15 @@ az ad user delete --id $labUser
 > BYOM (Bring Your Own Model) pozwala przekierować ruch agenta przez APIM,
 > co daje Ci pełną kontrolę: rate limiting, logowanie, metryki kosztów, routing między modelami.
 >
-> **Ważne:** BYOM działa z **dowolną wersją APIM** (v1 Developer, Standard, Premium).
-> Nie wymaga APIM v2 — to odróżnia BYOM od funkcji „AI Gateway",
-> która wymaga APIM v2 (Basic v2, Standard v2, Premium v2).
+> **⚠️ Ważne — wymagania APIM tier:**
+> Oficjalnie BYOM wymaga **APIM Standard v2 lub Premium** (patrz [Current Limitations](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md#-current-limitations)).
+> APIM Developer tier jest **nieoficjalnie wspierany** — konfiguracja connection działa,
+> ale integracja sieciowa (Private Endpoint) wymaga wyższego tieru.
 >
-> 📎 **Dokumentacja:** [BYOM — Bring Your Own Model](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/bring-your-own-model)
+> 📎 **Dokumentacja:**
+> - [AI Gateway / BYOM](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/ai-gateway)
+> - [APIM + ModelGateway Integration Guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md)
+> - [Template 16: Private APIM + BYO VNet](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup)
 
 ### Architektura BYOM
 
@@ -1108,14 +1112,16 @@ az ad user delete --id $labUser
 
 ### BYOM vs AI Gateway
 
-| | **BYOM (ten warsztat)** | **AI Gateway** |
+| | **BYOM (ten warsztat)** | **AI Gateway (produkcja)** |
 |---|---|---|
-| **Wymaga APIM** | v1 (Developer, Standard, Premium) | **v2 tylko** (Basic v2, Standard v2, Premium v2) |
-| **Konfiguracja** | Connection + subscription key | Automatyczna integracja z portalu |
+| **Wymaga APIM** | **Standard v2 / Premium** (oficjalnie) | **Standard v2 / Premium** |
+| **APIM Developer** | Connection działa, PE nie | Nie wspierany |
+| **Konfiguracja** | Connection + subscription key + CLI/Bicep | Portal wizard (Admin connected models) |
+| **Private Network** | Private Endpoint do APIM ([template 16](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup)) | Jak BYOM |
 | **Rate limiting** | Ręczna policy w APIM | Wbudowane token limity |
 | **Monitoring** | APIM Analytics / App Insights | AI Gateway Dashboard |
-| **Koszt APIM** | ~$50/mies. (Developer) | ~$280/mies.+ (Basic v2) |
-| **Scenariusz** | PoC, dev/test, mniejsze wdrożenia | Produkcja z governance |
+| **Koszt APIM** | ~$280/mies.+ (Standard v2) | ~$280/mies.+ (Standard v2) |
+| **Scenariusz** | Enterprise z pełną kontrolą | Szybki start z governance |
 
 ### Krok 8b.1: Konfiguracja BYOM
 
@@ -1185,6 +1191,65 @@ Skrypt automatycznie:
 
 > ⚠️ **Uwaga:** Jeśli model `apim-openai-gateway/gpt-4.1` nie pojawia się na liście,
 > poczekaj ~2 minuty — propagacja connection może chwilę trwać.
+
+### Znane ograniczenia BYOM + Private Network
+
+> 📋 **Źródło:** [APIM & ModelGateway Integration Guide — Current Limitations](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md#-current-limitations)
+
+#### 1. APIM Tier: tylko Standard v2 i Premium
+
+BYOM oficjalnie wspiera **tylko APIM Standard v2 i Premium**. APIM Developer tier:
+- ✅ Connection do Foundry można utworzyć (CLI/Bicep)
+- ✅ Agent widzi model w konfiguracji
+- ❌ **Private Endpoint do APIM nie jest wspierany** — agent runtime nie może połączyć się z APIM w prywatnej sieci
+- ❌ Brak wsparcia w portalu "Admin connected models"
+
+#### 2. APIM Internal VNet mode a BYOM
+
+Foundry Agent Service runtime (Container App w BYO VNet) łączy się z APIM przez **Private Endpoint**, a nie bezpośrednio przez VNet. Dlatego:
+- ❌ **APIM Internal VNet mode NIE działa** z BYOM — agent nie może rozwiązać DNS APIM
+- ✅ APIM z **Private Endpoint** (Standard v2/Premium) — oficjalnie wspierany
+- ✅ APIM **publiczny** (bez VNet) — działa, ale ruch wychodzi z VNet
+
+Błąd przy Internal VNet:
+```
+model_error: Name or service not known
+(apim-xxx.azure-api.net:443)
+```
+
+#### 3. Portal "Admin connected models" a Internal VNet APIM
+
+Portal Foundry (`ai.azure.com` → Admin console → Admin-connected models):
+- ❌ **Nie widzi APIM w trybie Internal VNet** (brak publicznego data-plane)
+- ✅ Widzi APIM bez VNet lub z External VNet mode
+- ✅ CLI/Bicep działa niezależnie od trybu VNet
+
+#### 4. Rekomendowana architektura dla pełnej izolacji sieciowej
+
+Zgodnie z [Template 16](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup):
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  VNet (BYO)                                                      │
+│                                                                   │
+│  ┌──────────────┐    ┌─────────────────┐    ┌──────────────────┐ │
+│  │ Agent Runtime │───►│ Private Endpoint│───►│ APIM             │ │
+│  │ (snet-agent)  │    │ (snet-pe)       │    │ (Standard v2)    │ │
+│  │ Container App │    │ privatelink.    │    │ publiczny lub    │ │
+│  │               │    │ azure-api.net   │    │ PE-only          │ │
+│  └──────────────┘    └─────────────────┘    └──────────────────┘ │
+│                                                    │              │
+│                                              ┌─────▼────────┐    │
+│                                              │ Foundry       │    │
+│                                              │ OpenAI (PE)   │    │
+│                                              └──────────────┘    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Wymagania:**
+- APIM **Standard v2** lub **Premium** (Private Endpoint support)
+- Private DNS zone: `privatelink.azure-api.net` zlinkowana do VNet
+- RBAC: Foundry Account MI + Project MI → `API Management Service Reader` na APIM
 
 ---
 
