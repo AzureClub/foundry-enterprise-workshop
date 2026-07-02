@@ -34,7 +34,8 @@
 | Bastion (Basic) | ~$0.19/h | Dostęp do portalu |
 | VPN Gateway (VpnGw1AZ) | ~$0.19/h | Opcjonalny, zdalny dostęp |
 | Jumpbox VM (B2s) | ~$0.05/h | Windows Server |
-| APIM Developer (opcja) | ~$0.07/h | Faza 8 |
+| APIM Standard v2 (Opcja A) | ~$0.38/h | Foundry AI Gateway — wymaga v2 |
+| APIM Developer (Opcja B) | ~$0.07/h | Standalone proxy — tańsza opcja |
 
 > 💡 **Szacowany koszt: ~$2-4/h** za całe środowisko. Po warsztacie **natychmiast uruchom Cleanup!**
 
@@ -102,6 +103,160 @@ Microsoft Foundry oferuje **dwa modele** konfiguracji sieci:
 - Szybkie PoC / prototypowanie
 - Brak wymagań compliance
 - Nie ma istniejącej infrastruktury sieciowej
+
+### 🆕 Warianty BYO VNet — Standard vs Basic
+
+Od czerwca 2025 Microsoft udostępnił **dwa warianty** BYO VNet:
+
+| | **Standard Setup** (ten warsztat) | **Basic Setup** (nowość!) |
+|---|---|---|
+| **BYO Data Resources** | ✅ Wymagane (CosmosDB, Storage, AI Search) | ❌ Nie wymagane — multi-tenant |
+| **Dane** | Zostają w Twojej subskrypcji | Shared Microsoft infra |
+| **Kontrola danych** | Pełna | Ograniczona |
+| **Złożoność** | Wyższa (więcej zasobów, RBAC, PE) | Niższa |
+| **Koszty** | Wyższe (własne DB, Storage) | Niższe |
+| **Dla kogo** | Enterprise, compliance, finanse | Dev/test, PoC w sieci prywatnej |
+| **Template** | `15-private-network-standard-agent-setup` | `11-private-network-basic-vnet` |
+
+> 💡 **Kiedy wybrać Basic?** Klient chce prywatną sieć (BYO VNet), ale **nie potrzebuje** pełnej kontroli nad danymi.
+> Np. Hosted Agent z własnym kodem, który łączy się z API klienta — nie potrzebuje BYO CosmosDB.
+>
+> ⚠️ **W wariancie Basic** dane agentów (wątki, pliki) są przechowywane w zasobach zarządzanych przez Microsoft.
+> Dla regulowanych sektorów (finanse, zdrowie) wybierz **Standard**.
+
+> 📎 **Dokumentacja:**
+> - [Basic VNet template](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/11-private-network-basic-vnet)
+> - [Agent tools z network isolation](https://learn.microsoft.com/en-us/azure/foundry/how-to/configure-private-link#agent-tools-with-network-isolation)
+
+### 🔍 Deep Dive: Jak działa sieć w Foundry Agent Service
+
+Zanim zagłębimy się w konfigurację, warto zrozumieć **jak agent runtime komunikuje się z Twoimi zasobami**.
+
+> 📎 **Źródło:** [Deep dive into Foundry Agent Service networking](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agents-networking-deep-dive)
+
+#### Dwie strefy sieciowe
+
+Architektura Foundry Agent Service dzieli się na **dwie strefy**:
+
+```
+┌─────────────────────────────────┐    ┌──────────────────────────────────┐
+│  FOUNDRY PLATFORM NETWORK       │    │  TWÓJ VNet (BYO)                 │
+│  (zarządza Microsoft)            │    │  (zarządzasz Ty)                 │
+│                                  │    │                                  │
+│  ┌───────────────────────┐       │    │  ┌────────────────────────────┐  │
+│  │ Foundry Endpoint      │       │    │  │ Delegowany Subnet          │  │
+│  │ (HTTPS API gateway)   │       │    │  │ (snet-agent)               │  │
+│  └───────────┬───────────┘       │    │  │                            │  │
+│              │                   │    │  │  Micro-VMs (Hosted Agents) │  │
+│  ┌───────────┴───────────┐       │    │  │  Data Proxy (ACA)          │  │
+│  │ Micro-VM Host Layer   │◄──────┼────┼──│  (konsumują IP z subnetu)  │  │
+│  │ (zarządza Micro-VMs)  │       │    │  └────────────────────────────┘  │
+│  └───────────┬───────────┘       │    │                                  │
+│              │                   │    │  ┌────────────────────────────┐  │
+│  ┌───────────┴───────────┐       │    │  │ PE Subnet                  │  │
+│  │ Tools Service         │       │    │  │ (snet-pe)                  │  │
+│  │ (tool calls, shared)  │       │    │  │                            │  │
+│  └───────────┬───────────┘       │    │  │  PE: Storage               │  │
+│              │                   │    │  │  PE: CosmosDB              │  │
+│  ┌───────────┴───────────┐       │    │  │  PE: AI Search             │  │
+│  │ Data Proxy Host Layer │◄──────┼────┼──│  PE: Key Vault             │  │
+│  │ (orkiestracja proxy)  │       │    │  └────────────────────────────┘  │
+│  └───────────────────────┘       │    │                                  │
+└─────────────────────────────────┘    └──────────────────────────────────┘
+```
+
+#### Kluczowe komponenty
+
+| Komponent | Gdzie | Co robi |
+|-----------|-------|---------|
+| **Foundry Endpoint** | Microsoft | Przyjmuje HTTPS, auth, routing do agenta |
+| **Micro-VM Host Layer** | Microsoft | Zarządza Micro-VMs w Twoim VNet (lifecycle, skalowanie) |
+| **Micro-VM** | Twój VNet | Lekka VM z **Twoim kontenerem** (ACR) — tylko Hosted Agents |
+| **Tools Service** | Microsoft | Wykonuje tool calls — shared dla obu typów agentów |
+| **Data Proxy Host Layer** | Microsoft | Zarządza Data Proxy (orkiestracja, routing) |
+| **Data Proxy (ACA)** | Twój VNet | Sieciowy pośrednik — most między Foundry a Twoimi zasobami |
+
+#### Data Proxy — kluczowy element
+
+**Data Proxy** to Azure Container App w Twoim delegowanym subnecie, dedykowany **per projekt**:
+
+- Wszystkie tool calls (MCP, OpenAPI, function calls) przechodzą przez Data Proxy
+- Łączy się z Twoimi zasobami **wyłącznie** przez Private Endpoints
+- Nie ma dostępu do internetu — widzi **tylko** Twój VNet
+- Skaluje się automatycznie z ruchem (~1 IP na 10 podów)
+
+#### Dwa typy agentów = dwie ścieżki ruchu
+
+##### Prompt Agent (Microsoft zarządza compute)
+
+```
+Klient → Foundry Endpoint → Tools Service → Data Proxy (ACA) → PE → Twoje zasoby
+                             (w Microsoft)    (w Twoim VNet)
+```
+
+- **Brak Micro-VM** — compute zarządzany przez Microsoft
+- Ty definiujesz zachowanie przez prompt/konfigurację
+- IP zużywane tylko przez Data Proxy
+
+##### Hosted Agent (Twój kontener z ACR)
+
+```
+Klient → Foundry Endpoint → Micro-VM Host Layer → Micro-VM (Twój VNet)
+                                                       │
+                                          Twój kod chce tool call
+                                                       │
+                              Tools Service ← ─ ─ ─ ─ ┘
+                                    │
+                              Data Proxy (ACA) → PE → Twoje zasoby
+```
+
+- **Micro-VM** w Twoim VNet — uruchamia **Twój kontener** z ACR
+- Host Layer orkiestruje: wysyła `/invoke`, odbiera tool call requests
+- Tool calls **zawsze** przechodzą przez Data Proxy (nawet z Micro-VM)
+- Micro-VM ma własną kartę sieciową (zużywa IP)
+
+#### Sizing subnetu delegowanego
+
+| Subnet | IP usable | Sesji jednocz. | Rekomendacja |
+|--------|-----------|---------------|-------------|
+| **/27** | ~27 | ~17 | ⚠️ Dev/test — ryzykowne |
+| **/26** | ~59 | ~50 (max) | ✅ Minimum produkcyjne |
+| **/24** | ~251 | 50 (limit) | ✅ **Rekomendowane** — zapas na upgrade'y |
+
+> ⚠️ **Utrzymuj max 80% wykorzystania** — platformowe upgrade'y uruchamiają stare i nowe repliki równolegle.
+>
+> ⚠️ **Portal NIE pokazuje zużycia IP** w delegowanym subnecie. Monitoruj: Data Proxy 5xx = brak IP.
+
+#### Pojemność projektów vs ruch
+
+| Ruch | Projektów | Dlaczego |
+|------|----------|---------|
+| Niski (1 replika/projekt) | ~250 | Data Proxy na minimum |
+| Wysoki (10 replik/projekt) | ~25 | Każdy projekt skaluje, zjada IP |
+
+#### Bezpieczeństwo sieci
+
+- ✅ Micro-VMs i Data Proxy widzą **TYLKO** Twój VNet
+- ✅ Platform NIC jest **ukryty** — workload go nie widzi
+- ✅ Egress **TYLKO** przez Private Endpoints
+- ✅ Izolacja **per projekt** — każdy projekt ma własny Data Proxy
+- ✅ Żaden ruch nie wychodzi do publicznego internetu
+
+### 🆕 Ograniczenia Network Isolation
+
+#### Publikowanie agentów do Microsoft 365 / Teams
+
+> ⚠️ Gdy **Network Isolation jest włączona**, publikowanie agentów do Microsoft 365 Copilot lub Teams
+> wymaga **dodatkowej konfiguracji**. Nie działa "out of the box".
+
+> 📎 [Publish a virtual network agent to Microsoft 365 and Teams](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/agent-applications-vnet)
+
+#### Fabric IQ przez prywatną sieć
+
+> 🆕 Od czerwca 2025 tool call z Foundry do **Fabric Data Agent** działa przez prywatną sieć.
+> Wymaga skopiowania nowego private endpoint z portalu Fabric.
+
+> 📎 [Fabric IQ z VNet support](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq?tabs=azd&pivots=python#virtual-network-support)
 
 ### Wymagania sieciowe BYO VNet
 
@@ -193,15 +348,54 @@ Tożsamość systemowa projektu — używana przez Agent Runtime do operacji dat
 
 > 🔬 **PRZETESTOWANE! Konfiguracja zgodna z [oficjalną dokumentacją Microsoft — Full access isolation](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry#access-isolation-examples):**
 
+> ⚠️ **Role zostały przemianowane** (czerwiec 2025): Azure AI User → **Foundry User**, Azure AI Owner → **Foundry Owner**,
+> Azure AI Account Owner → **Foundry Account Owner**, Azure AI Project Manager → **Foundry Project Manager**.
+> ID ról się nie zmieniły. W portalu mogą nadal pojawiać się stare nazwy.
+
+##### Role Foundry — porównanie
+
+| Rola | Tworzenie agentów | Publikowanie agentów | Tworzenie projektów | Zarządzanie modelami | Przypisywanie ról |
+|------|:---:|:---:|:---:|:---:|:---:|
+| **Foundry User** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Foundry Project Manager** | ✅ | ✅ | ❌ | ❌ | ✅ ¹ |
+| **Foundry Account Owner** | ❌ | ❌ | ✅ | ✅ | ✅ ² |
+| **Foundry Owner** | ✅ | ✅ | ✅ | ✅ | ✅ ² |
+
+¹ Tylko rola Foundry User  
+² Foundry User, ACR, monitoring
+
+> ⚠️ **NIE używaj** ról `Cognitive Services *` — nie są przeznaczone do Foundry.
+> **NIE używaj** `Azure AI Developer` — dotyczy Azure ML, nie Foundry.
+
+##### ID ról (do automatyzacji — nazwy mogą się jeszcze zmieniać)
+
+| Rola | GUID |
+|------|------|
+| Foundry User | `53ca6127-db72-4b80-b1b0-d745d6d5456d` |
+| Foundry Owner | `c883944f-8b7b-4483-af10-35834be79c4a` |
+| Foundry Account Owner | `e47c6f54-e4a2-4754-9501-8e0985b135e1` |
+| Foundry Project Manager | `eadc314b-1a2d-4efa-be10-5d325db5065e` |
+
+##### Rekomendowane mapowanie per persona
+
+| Persona | Rola | Scope | Cel |
+|---------|------|-------|-----|
+| **IT Admin** | Owner | Subskrypcja | Pełne zarządzanie |
+| **Platform / Manager** | Foundry Account Owner | Foundry Account | Tworzenie projektów, deploy modeli |
+| **Team Lead** | Foundry Project Manager | Foundry Account | Tworzenie projektów, publikowanie agentów |
+| **Developer** | Foundry User + Foundry Model Reader (custom) | Projekt + Account | Budowanie agentów, widok modeli |
+
 Dla użytkowników portalu ai.azure.com potrzebujesz **dwóch ról**:
 
 | Rola | Scope | Cel | Wymagana? |
 |------|-------|-----|-----------|
-| **Azure AI User** | **Project** | Data plane — tworzenie agentów, praca z modelem | ✅ TAK |
-| **Reader** | **Account** (Foundry resource) | Control plane — widoczność modeli w dropdown | ✅ TAK |
+| **Foundry User** (dawniej Azure AI User) | **Project** | Data plane — tworzenie agentów, praca z modelem | ✅ TAK |
+| **Foundry Model Reader** (custom) | **Account** (Foundry resource) | Control plane — widoczność modeli, bez widoku innych projektów | ✅ TAK |
 
 > 📎 **Źródło:** Sekcja [Sample enterprise RBAC mappings for projects](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry#sample-enterprise-rbac-mappings-for-projects):
-> *"Team members or developers — Azure AI User on Foundry project scope and Reader on the Foundry resource scope"*
+> *"Team members or developers — Foundry User on Foundry project scope and Reader on the Foundry resource scope"*
+>
+> W naszym warsztacie używamy **Foundry Model Reader** zamiast Reader — daje widoczność modeli **bez** widoku nazw innych projektów.
 
 **NIE potrzeba** (portal używa MI projektu, nie tożsamości usera):
 
