@@ -1,14 +1,18 @@
 # Microsoft Foundry dla klientów enterprise
 ## Foundry BYO VNet Integration Test — Workshop
 
-Warsztat krok po kroku: wdrożenie Microsoft Foundry z BYO VNet (Bring Your Own Virtual Network) przy użyciu Azure CLI, Bicep i GitHub Copilot.
+Warsztat krok po kroku: wdrożenie Microsoft Foundry z BYO VNet (Bring Your Own Virtual Network) przy użyciu Azure CLI i Bicep.
+
+> 📘 Pełna instrukcja warsztatu: [WORKSHOP.md](WORKSHOP.md)
 
 ## Co to robi?
 
-1. **Deployuje** całą infrastrukturę przez Bicep + Azure CLI
+1. **Deployuje** infrastrukturę Foundry w prywatnej sieci przez Bicep + Azure CLI
 2. **Testuje** każdy komponent (sieć, PE, DNS, RBAC, tożsamości, portal)
 3. **Weryfikuje izolację** — data plane zablokowany z Internetu
-4. **Generuje raport** GO/NO-GO z listą co działa a co nie
+4. **Konfiguruje APIM** jako AI Gateway (Standard v2) lub Standalone Proxy
+5. **Sprawdza multi-tenant RBAC** — izolacja per-projekt z Custom Role
+6. **Generuje raport** GO/NO-GO z listą co działa a co nie
 
 ## Architektura
 
@@ -21,173 +25,135 @@ Warsztat krok po kroku: wdrożenie Microsoft Foundry z BYO VNet (Bring Your Own 
 │  Microsoft.App/           PE: Storage (blob)                 │
 │    environments           PE: CosmosDB (sql)                 │
 │  Foundry Agent Service    PE: AI Search                      │
+│  (Data Proxy + Micro-VMs) PE: APIM Standard v2 (gateway)     │
 │                                                              │
 │  AzureBastionSubnet /26   snet-mgmt /27                      │
 │  Azure Bastion            Jumpbox VM (Win11, private IP)     │
 │                                                              │
-│  GatewaySubnet /27        snet-apim /27 (opcjonalnie)        │
-│  VPN P2S Gateway          API Management (Internal VNet)     │
+│  GatewaySubnet /27                                           │
+│  VPN P2S Gateway (opcjonalnie)                               │
 │                                                              │
 │  Private DNS Zones (7 linked do VNet)                        │
 └──────────────────────────────────────────────────────────────┘
 ```
 
+## Nowe funkcje (2025)
+
+- **BYO VNet bez BYO Storage** — wariant Basic (bez obowiązkowego CosmosDB/Storage/Search)
+- **Foundry AI Gateway** — natywna integracja APIM v2 z Foundry (token limits, governance)
+- **Nowe nazwy ról Foundry** — Foundry User, Foundry Owner, Foundry Account Owner, Foundry Project Manager
+- **Fabric IQ przez prywatną sieć** — tool call do Fabric Data Agent
+- **Agent publish do M365/Teams** z VNet — wymaga dodatkowej konfiguracji
+
 ## Wymagania wstępne
 
 1. **Azure CLI** zainstalowane i zalogowane (`az login`)
-2. **Uprawnienia**: Owner lub Role Based Access Administrator na subskrypcji
-3. **Region**: Foundry Agent Service musi być dostępny w wybranym regionie
-   - Wspierane: Australia East, East US, East US 2, France Central, Sweden Central, West Europe, West US...
+2. **Uprawnienia**: Owner na subskrypcji
+3. **Region**: Sweden Central, East US, East US 2, France Central, West Europe, Australia East
 
 ## Szybki start
 
-### Krok 1: Konfiguracja
-
-Edytuj `config/test-config.json` — ustaw swoją subskrypcję, region i nazwy zasobów.
-
-### Krok 2: Ustaw hasło VM
-
 ```powershell
-$env:VM_ADMIN_PASSWORD = "TwojeHaslo123!"
+# 1. Klonuj i konfiguruj
+git clone https://github.com/AzureClub/foundry-enterprise-workshop.git
+cd foundry-enterprise-workshop
+cp .env.example .env    # Uzupełnij wartości
+. .\scripts\load-env.ps1
+
+# 2. Deploy infrastruktury
+.\scripts\00-preflight.ps1
+.\scripts\01-deploy-foundry.ps1     # 15-30 min
+
+# 3. Testy
+.\scripts\04-test-network.ps1       # VNet/subnety/DNS
+.\scripts\05-test-pe.ps1            # Private Endpoints
+.\scripts\06-test-agent.ps1         # Agent Service
+.\scripts\08-test-identity.ps1      # MI/RBAC
+.\scripts\10-test-portal-access.ps1 # Bastion/Portal
+
+# 4. APIM (opcjonalnie)
+.\scripts\02-deploy-apim.ps1        # Standard v2 (5-15 min)
+.\scripts\03-import-openapi-mcp.ps1
+.\scripts\14-test-ai-gateway.ps1    # Test z Jumpboxa
+.\scripts\15-test-foundry-ai-gateway.ps1  # Test Foundry AI Gateway
+
+# 5. Raport
+.\scripts\09-e2e-report.ps1         # GO/NO-GO
 ```
 
-### Krok 3: Uruchom orkiestrator
+## Dostęp do portalu ai.azure.com
 
-```powershell
-# Wszystko jednym poleceniem:
-.\run-all.ps1
+Portal wymaga dostępu z wnętrza VNet (`publicNetworkAccess: Disabled`):
 
-# Lub krok po kroku:
-.\scripts\00-preflight.ps1          # Pre-flight checks
-.\scripts\01-deploy-foundry.ps1     # Deploy (15-30 min, VPN ~25 min)
-.\scripts\04-test-network.ps1       # Test VNet/subnety/DNS
-.\scripts\05-test-pe.ps1            # Test Private Endpoints
-.\scripts\06-test-agent.ps1         # Test Agent Service + izolacja
-.\scripts\08-test-identity.ps1      # Test MI/RBAC
-.\scripts\10-test-portal-access.ps1 # Test Bastion/VPN/Portal
-.\scripts\09-e2e-report.ps1         # Raport GO/NO-GO
-```
+**Przez Bastion:** Azure Portal → `vm-jumpbox` → Connect → Bastion → Edge → `ai.azure.com`
 
-### Krok 4: Dostęp do portalu ai.azure.com
-
-Portal ai.azure.com ładuje UI z Internetu, ale wszystkie API calls idą przez Private Endpoints.
-**Z Internetu portal NIE ZADZIAŁA** (403/404) — i to jest poprawne zachowanie!
-
-**Przez Bastion (do testów):**
-1. Azure Portal → `vm-jumpbox` → Connect → Bastion
-2. Login: `azureadmin` / hasło z env
-3. Otwórz Edge → `https://ai.azure.com`
-4. Zaloguj się i sprawdź czy widzisz projekt + możesz tworzyć agentów
-
-**Przez VPN P2S (dla klienta):**
-1. Pobierz profil VPN:
-   ```powershell
-   az network vnet-gateway vpn-client generate \
-     --name vpngw-foundry-test \
-     --resource-group rg-foundry-byovnet
-   ```
-2. Zainstaluj profil VPN na laptopie
-3. Połącz się → otwórz `https://ai.azure.com`
-4. Skonfiguruj DNS forwarding dla Private DNS Zones → `168.63.129.16`
+**Przez VPN P2S:** Pobierz profil VPN → Połącz → `ai.azure.com`
 
 ## Ważne lekcje (lessons learned)
 
-### 1. Rola portalu: Azure AI Developer, NIE Azure AI User
-- **Azure AI User** = read-only, nie pozwala budować agentów
-- **Azure AI Developer** = pełny dostęp do tworzenia agentów i deploymentów
-- Nadajemy na **Account** (dziedziczenie na projekty) lub **Project** (izolacja per-zespół)
-- Użytkownik portalu potrzebuje też ról na zasobach: Storage Blob Data Contributor, Search Index Data Contributor, Cosmos DB data plane
+| # | Lekcja |
+|---|--------|
+| 1 | **Foundry User** (dawniej Azure AI User) na **Project scope** — minimum do tworzenia agentów |
+| 2 | **Foundry Model Reader** (custom role) zamiast Reader — ukrywa nazwy innych projektów |
+| 3 | CosmosDB wymaga **data plane RBAC** (`Cosmos DB Built-in Data Contributor`) gdy `disableLocalAuth: true` |
+| 4 | Storage connection musi być `AzureStorageAccount`, nie `AzureBlob` |
+| 5 | Account `networkInjections` → stan "Accepted" → retry logic na projekt |
+| 6 | APIM Standard v2 wymagany dla Foundry AI Gateway; Developer OK dla standalone proxy |
+| 7 | `publicNetworkAccess: Disabled` = portal działa TYLKO z VNet (Bastion/VPN) |
 
-### 2. CosmosDB wymaga data plane RBAC
-- Gdy `disableLocalAuth: true`, samo "Cosmos DB Operator" (control plane) NIE WYSTARCZY
-- Trzeba dodać **Cosmos DB Built-in Data Contributor** przez:
-  ```
-  az cosmosdb sql role assignment create \
-    --role-definition-id 00000000-0000-0000-0000-000000000002 \
-    --principal-id <MI-principal-id> \
-    --scope <cosmos-account-id>
-  ```
-- Dotyczy zarówno Project MI jak i Account MI
-
-### 3. Storage connection: AzureStorageAccount, NIE AzureBlob
-- Capability Host wymaga kategorii `AzureStorageAccount`
-- `AzureBlob` powoduje błąd: "Connection is AzureBlob but not AzureStorageAccount"
-
-### 4. Race condition: Account networkInjections + Project
-- ARM PUT na konto z `networkInjections` → konto wraca do stanu "Accepted"
-- Projekt (child resource) nie może się stworzyć na koncie w stanie "Accepted"
-- **Rozwiązanie**: deploy w 2 fazach lub retry z czekaniem na `Succeeded`
-
-### 5. VPN Gateway AZ SKU wymaga zones na Public IP
-- `VpnGw1` jest deprecated — użyj `VpnGw1AZ`
-- Public IP musi mieć `zones: ['1', '2', '3']`
-- Nie można dodać zones do istniejącego PIP — trzeba go usunąć i stworzyć nowy
-
-### 6. subnetArmId — użyj resourceId(), NIE dynamicznych referencji
-- `vnet.properties.subnets[0].id` → odrzucane przez API Foundry
-- `resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnetName)` → działa
-
-## Raport
-
-Po uruchomieniu `09-e2e-report.ps1` dostaniesz raport:
+## Struktura plików
 
 ```
-═══════════════════════════════════════════════════════
-  FOUNDRY BYO VNet - E2E TEST REPORT
-═══════════════════════════════════════════════════════
-✅ PASS  [Network] VNet exists: vnet-foundry-test
-✅ PASS  [PE] pe-ai-foundry (account): Status: Approved
-✅ PASS  [Foundry] Public access: Disabled
-✅ PASS  [Portal] Bastion: Succeeded
-✅ PASS  [Portal] VPN Gateway: Succeeded
-═══════════════════════════════════════════════════════
-  VERDICT: GO
-  Total: 21 PASS | 0 FAIL | 1 WARN
-═══════════════════════════════════════════════════════
+foundry-enterprise-workshop/
+├── WORKSHOP.md                    # Pełna instrukcja warsztatu (krok po kroku)
+├── README.md                      # Ten plik
+├── .env.example                   # Szablon konfiguracji
+├── run-all.ps1                    # Orkiestrator
+├── bicep/
+│   ├── main.bicep                 # Foundry + BYO VNet + PE + RBAC + Bastion
+│   ├── main.bicepparam
+│   ├── apim.bicep                 # APIM Standard v2 + Private Endpoint
+│   └── apim.bicepparam
+├── scripts/
+│   ├── 00-preflight.ps1           # Pre-flight checks
+│   ├── 01-deploy-foundry.ps1      # Deploy Foundry + VNet
+│   ├── 02-deploy-apim.ps1         # Deploy APIM Standard v2
+│   ├── 03-import-openapi-mcp.ps1  # Import API do APIM
+│   ├── 04-test-network.ps1        # Test VNet/subnety/DNS
+│   ├── 05-test-pe.ps1             # Test Private Endpoints
+│   ├── 06-test-agent.ps1          # Test Agent Service
+│   ├── 07-test-apim.ps1           # Test APIM
+│   ├── 08-test-identity.ps1       # Test MI/RBAC
+│   ├── 09-e2e-report.ps1          # Raport GO/NO-GO
+│   ├── 10-test-portal-access.ps1  # Test Bastion/Portal
+│   ├── 11-configure-byom.ps1      # BYOM konfiguracja
+│   ├── 12-test-byom.ps1           # BYOM testy
+│   ├── 13-test-byom-e2e.ps1       # BYOM E2E test
+│   ├── 14-test-ai-gateway.ps1     # APIM Standalone Proxy test (6 testów)
+│   ├── 15-test-foundry-ai-gateway.ps1  # Foundry AI Gateway test
+│   └── load-env.ps1               # Ładowanie .env
+├── config/
+│   └── test-config.json           # Konfiguracja zasobów
+└── docs/                          # Dokumentacja dodatkowa
 ```
 
 ## Cleanup
 
 ```powershell
-# 1. Usuń Capability Host (wymagane przed usunięciem konta)
-az rest --method DELETE --url "https://management.azure.com/<project-id>/capabilityHosts/default?api-version=2025-04-01-preview"
-
-# 2. Usuń resource group
+# Usuń resource group (wszystko w środku)
 az group delete --name rg-foundry-byovnet --yes --no-wait
 
-# 3. Purguj Foundry Account (soft-delete protection)
+# Purguj Foundry Account (soft-delete protection)
 az cognitiveservices account purge --name <account-name> --resource-group <rg> --location <region>
+
+# Purguj APIM (soft-delete)
+az rest --method DELETE --uri "https://management.azure.com/subscriptions/<sub>/providers/Microsoft.ApiManagement/locations/<region>/deletedservices/<apim-name>?api-version=2024-06-01-preview"
 ```
 
-## Bazowy template
+## Dokumentacja
 
-Inspirowane oficjalnym template Microsoft:
-[foundry-samples/15-private-network-standard-agent-setup](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup)
-
-## Struktura plików
-
-```
-foundry-vnet-test/
-├── run-all.ps1                 # Orkiestrator (jedno polecenie)
-├── skill.md                    # Definicja skilla
-├── bicep/
-│   ├── main.bicep              # Foundry + BYO VNet + PE + RBAC + Bastion + VPN
-│   ├── main.bicepparam         # Parametry
-│   ├── apim.bicep              # APIM Internal VNet (opcjonalnie)
-│   └── apim.bicepparam         # Parametry APIM
-├── scripts/
-│   ├── 00-preflight.ps1        # Pre-flight checks
-│   ├── 01-deploy-foundry.ps1   # Deploy Bicep (z retry logic)
-│   ├── 02-deploy-apim.ps1      # Deploy APIM
-│   ├── 03-import-openapi-mcp.ps1 # Import API do APIM
-│   ├── 04-test-network.ps1     # Test VNet/subnety/DNS
-│   ├── 05-test-pe.ps1          # Test Private Endpoints
-│   ├── 06-test-agent.ps1       # Test Agent Service + izolacja
-│   ├── 07-test-apim.ps1        # Test APIM
-│   ├── 08-test-identity.ps1    # Test MI/RBAC
-│   ├── 09-e2e-report.ps1       # E2E raport GO/NO-GO
-│   └── 10-test-portal-access.ps1  # Test Bastion/VPN/Portal
-├── config/
-│   └── test-config.json        # Konfiguracja
-└── README.md                   # Ten plik
-```
+- [Foundry BYO VNet](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/virtual-networks)
+- [Foundry Networking Deep Dive](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agents-networking-deep-dive)
+- [Foundry AI Gateway](https://learn.microsoft.com/en-us/azure/foundry/configuration/enable-ai-api-management-gateway-portal)
+- [Foundry RBAC](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
+- [foundry-samples templates](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep)

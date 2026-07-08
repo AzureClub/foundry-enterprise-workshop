@@ -405,15 +405,15 @@ Dla użytkowników portalu ai.azure.com potrzebujesz **dwóch ról**:
 | Search Index Data Contributor | ❌ | Portal → MI projektu → Search |
 | Cosmos DB Operator | ❌ | Portal → MI projektu → CosmosDB |
 | Cognitive Services OpenAI User | ❌ | Dokumentacja nie wymienia tej roli |
-| Azure AI Developer | ❌ | Azure AI User wystarczy do "build and develop" |
+| Azure AI Developer | ❌ | Foundry User wystarczy do "build and develop" |
 
 ##### Izolacja per-projekt — jak to działa
 
 Konfiguracja zgodna z oficjalnym wzorcem **"Full access isolation"**:
 
 ```
-# 1. Azure AI User na PROJEKCIE — data plane access
-az role assignment create --role "Azure AI User" \
+# 1. Foundry User na PROJEKCIE — data plane access
+az role assignment create --role "Foundry User" \
   --assignee "userA@firma.com" \
   --scope ".../accounts/{account}/projects/{projekt-A}"
 
@@ -431,7 +431,7 @@ az role assignment create --role "Reader" \
 > ✅ UserA **NIE MA dostępu** do zakładki Agents w innych projektach (data plane izolacja!)
 > ✅ Bez dodatkowych ról na CosmosDB/Storage/Search — wszystko działa
 >
-> ⚠️ **UWAGA:** NIE nadawaj `Azure AI User` na scope **Account** — to daje dostęp do WSZYSTKICH projektów!
+> ⚠️ **UWAGA:** NIE nadawaj `Foundry User` na scope **Account** — to daje dostęp do WSZYSTKICH projektów!
 > Portal wyświetla mylący komunikat sugerujący Account scope — **ignoruj go**, Project scope wystarczy.
 >
 > ⚠️ **Widoczność nazw projektów:** Oficjalny wzorzec MS z Reader na Account pozwala widzieć **nazwy** projektów.
@@ -443,12 +443,12 @@ az role assignment create --role "Reader" \
 Foundry Account: ai-foundry-enterprise
 │
 ├── projekt-zespol-A:
-│   ├── UserA1 → Azure AI User (scope: projekt-zespol-A)
-│   └── UserA2 → Azure AI User (scope: projekt-zespol-A)
+│   ├── UserA1 → Foundry User (scope: projekt-zespol-A)
+│   └── UserA2 → Foundry User (scope: projekt-zespol-A)
 │
 └── projekt-zespol-B:
-    ├── UserB1 → Azure AI User (scope: projekt-zespol-B)
-    └── UserB2 → Azure AI User (scope: projekt-zespol-B)
+    ├── UserB1 → Foundry User (scope: projekt-zespol-B)
+    └── UserB2 → Foundry User (scope: projekt-zespol-B)
 
 Wszyscy: "Foundry Model Reader" (custom, scope: Account)
          → accounts/read + deployments/read + models/read
@@ -658,6 +658,19 @@ Teraz deployujemy wszystkie zasoby Azure jednym poleceniem.
 > - **AI Search** — vector store dla RAG (Retrieval-Augmented Generation), file search
 >
 > W trybie BYO VNet wszystkie trzy są w Twojej sieci za Private Endpoints.
+
+> 🆕 **Wariant Basic (bez BYO Storage) — od czerwca 2025:**
+>
+> Jeśli klient **nie potrzebuje** pełnej kontroli nad danymi, może użyć wariantu **Basic VNet**:
+> - ❌ Nie tworzy BYO Storage, CosmosDB, AI Search
+> - ✅ Dane przechowywane w multi-tenant infrastrukturze Microsoft
+> - ✅ Mniej zasobów, mniej RBAC, niższe koszty
+> - ✅ Nadal pełna izolacja sieciowa (BYO VNet + PE do Foundry)
+>
+> Template: [11-private-network-basic-vnet](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/11-private-network-basic-vnet)
+>
+> ⚠️ Nie zalecane dla regulowanych sektorów (finanse, zdrowie) — dane w shared infra.
+> Szczegóły: patrz sekcja **"Warianty BYO VNet — Standard vs Basic"** w teorii.
 
 ### Oczekiwany wynik
 
@@ -998,9 +1011,9 @@ Invoke-RestMethod -Uri $uri -Method PUT -Headers @{
 Zgodnie z oficjalną dokumentacją Microsoft — dwie role:
 
 ```powershell
-# 1. Azure AI User na PROJEKCIE (data plane access)
+# 1. Foundry User na PROJEKCIE (data plane access)
 $projectScope = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$account/projects/$projectName"
-az role assignment create --role "Azure AI User" --assignee $labUser --scope $projectScope
+az role assignment create --role "Foundry User" --assignee $labUser --scope $projectScope
 
 # 2. Reader na KONCIE (control plane read — widoczność modeli)
 $accountScope = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$account"
@@ -1016,7 +1029,7 @@ az role assignment create --role "Reader" --assignee $labUser --scope $accountSc
 > **Bez Reader** użytkownik nie widzi modeli i nie może tworzyć agentów!
 >
 > 📎 Oficjalne źródło: [Sample enterprise RBAC mappings](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry#sample-enterprise-rbac-mappings-for-projects)
-> → wiersz "Team members or developers": *"Azure AI User on Foundry project scope and Reader on the Foundry resource scope"*
+> → wiersz "Team members or developers": *"Foundry User on Foundry project scope and Reader on the Foundry resource scope"*
 
 ### Krok 7b.4: Sprawdź nadane role
 
@@ -1028,7 +1041,7 @@ az role assignment list --assignee $labUser --all --query "[].{role:roleDefiniti
 ```
 Role           Scope
 -------------  -------------------------
-Azure AI User  .../projects/project-lab01
+Foundry User   .../projects/project-lab01
 Reader         .../accounts/{account}
 ```
 
@@ -1081,7 +1094,7 @@ Nadal zalogowany jako userlab01:
 **Oczekiwany wynik:** ❌ Brak dostępu do zakładki Agents — data plane zablokowany!
 
 > ✅ **To jest prawidłowe zachowanie!** Użytkownik widzi nazwy projektów (Reader na Account),
-> ale **nie ma dostępu do danych** w projektach, do których nie ma roli Azure AI User.
+> ale **nie ma dostępu do danych** w projektach, do których nie ma roli Foundry User.
 
 ### Podsumowanie izolacji
 
@@ -1094,7 +1107,7 @@ Nadal zalogowany jako userlab01:
 │  │ project-lab01        │  │ project-agent-test   │         │
 │  │                      │  │                      │         │
 │  │ userlab01:           │  │ userlab01:           │         │
-│  │ ✅ Azure AI User     │  │ ❌ BRAK RÓL          │         │
+│  │ ✅ Foundry User     │  │ ❌ BRAK RÓL          │         │
 │  │ ✅ Agents: DOSTĘP    │  │ ❌ Agents: ZABLOKOW. │         │
 │  │ ✅ Modele: WIDOCZNE  │  │ ❌ Data plane: BRAK  │         │
 │  └──────────────────────┘  └──────────────────────┘         │
@@ -1105,10 +1118,10 @@ Nadal zalogowany jako userlab01:
 >
 > | Metoda | Widzi nazwy projektów? | Widzi modele? | Data plane izolacja? | Kiedy stosować |
 > |--------|----------------------|--------------|---------------------|---------------|
-> | **Custom Role + AI User na Project** | ✅ **Nie widzi!** | ✅ Tak | ✅ Pełna | ⭐ **Najlepsza izolacja w jednym Account** |
-> | **Reader + AI User na Project** | ⚠️ Tak (nazwy widoczne) | ✅ Tak | ✅ Pełna | Oficjalny wzorzec MS, większość scenariuszy |
-> | **Tylko AI User na Project** (bez Reader) | ❌ Nie widzi | ❌ Nie widzi | ✅ Pełna, ale nie można tworzyć agentów | Nie zalecane |
-> | **AI User na Account** | ✅ Widzi wszystko | ✅ Tak | ❌ BRAK izolacji! | NIE UŻYWAJ w multi-tenant! |
+> | **Custom Role + Foundry User na Project** | ✅ **Nie widzi!** | ✅ Tak | ✅ Pełna | ⭐ **Najlepsza izolacja w jednym Account** |
+> | **Reader + Foundry User na Project** | ⚠️ Tak (nazwy widoczne) | ✅ Tak | ✅ Pełna | Oficjalny wzorzec MS, większość scenariuszy |
+> | **Tylko Foundry User na Project** (bez Reader) | ❌ Nie widzi | ❌ Nie widzi | ✅ Pełna, ale nie można tworzyć agentów | Nie zalecane |
+> | **Foundry User na Account** | ✅ Widzi wszystko | ✅ Tak | ❌ BRAK izolacji! | NIE UŻYWAJ w multi-tenant! |
 > | **Osobne Foundry Accounts** | ✅ Nie widzi nic | ✅ Tak | ✅ Pełna | Regulacje, osobne zarządzanie |
 >
 > ⭐ **Custom Role to najlepsza opcja** — ukrywa nazwy projektów, zachowuje widoczność modeli, działa w jednym Account!
@@ -1192,7 +1205,7 @@ az role assignment list --assignee $labUser --all \
 ```
 Role                  Scope
 --------------------  --------------------------------
-Azure AI User         .../projects/project-lab01
+Foundry User          .../projects/project-lab01
 Foundry Model Reader  .../accounts/{account}
 ```
 
@@ -1229,7 +1242,7 @@ Na Jumpbox VM, jako userlab01 (InPrivate):
 │  │ project-lab01        │  │ project-agent-test   │         │
 │  │                      │  │                      │         │
 │  │ userlab01:           │  │ userlab01:           │         │
-│  │ ✅ Azure AI User     │  │ ❌ BRAK RÓL          │         │
+│  │ ✅ Foundry User     │  │ ❌ BRAK RÓL          │         │
 │  │ ✅ PEŁNY DOSTĘP      │  │ ❌ NIEWIDOCZNY!      │         │
 │  └──────────────────────┘  └──────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
@@ -1291,7 +1304,7 @@ az ad user delete --id $labUser
 .\scripts\02-deploy-apim.ps1
 ```
 
-> ⏱️ APIM Developer tier: **30-45 minut**. To dobry moment na przerwę ☕
+> ⏱️ APIM Standard v2: **5-15 minut**. Znacznie szybciej niż Developer tier.
 
 ### Krok 8.2: Import API do APIM
 
@@ -1479,19 +1492,19 @@ Z Jumpboxa:
 
 ```
 ========================================
-  AI Gateway Test (Option B)
-  APIM as gateway to AI models
+  AI Gateway Test
+  APIM Standard v2 + Private Endpoint
 ========================================
-  ✅ PASS: DNS resolves apim-xxx.azure-api.net (IP: 192.168.2.4)
+  ✅ PASS: DNS resolves apim-xxx.azure-api.net (Private IP)
   ✅ PASS: TCP 443 to APIM
-  ✅ PASS: Chat Completions via APIM (Model: gpt-4.1, Tokens: 70, Latency: 4293ms)
+  ✅ PASS: Chat Completions via APIM (Model: gpt-4.1)
   ✅ PASS: Streaming response (22 chunks)
   ✅ PASS: Error on invalid model (HTTP 404)
   ✅ PASS: Rejected without subscription key (HTTP 401)
 ========================================
   ✅ PASS: 6   Total: 6
 ✅ AI Gateway dziala poprawnie!
-  Flow: Klient -> APIM (Internal VNet) -> Foundry OpenAI (PE)
+  Flow: Klient -> APIM (Private Endpoint) -> Foundry OpenAI (PE)
 ```
 
 #### Krok B.3: Sprawdź metryki w APIM
@@ -1593,20 +1606,44 @@ Po zakończeniu warsztatu — usuń zasoby żeby nie generować kosztów.
 $sub = (Get-Content config/test-config.json | ConvertFrom-Json).subscription_id
 $rg = (Get-Content config/test-config.json | ConvertFrom-Json).resource_group
 $aiName = az cognitiveservices account list --resource-group $rg --query "[0].name" -o tsv
+$apimName = az apim list -g $rg --query "[0].name" -o tsv 2>$null
+$location = "swedencentral"
 
-az rest --method DELETE `
-  --url "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$aiName/projects/project-agent-test/capabilityHosts/default?api-version=2025-04-01-preview"
+# Znajdź projekty
+$projects = az rest --method GET `
+  --url "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$aiName/projects?api-version=2025-04-01-preview" `
+  --query "value[].name" -o tsv 2>$null
+
+foreach ($proj in $projects) {
+    $projName = $proj.Split("/")[-1]
+    Write-Host "Usuwam Capability Host: $projName..."
+    az rest --method DELETE `
+      --url "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$aiName/projects/$projName/capabilityHosts/default?api-version=2025-04-01-preview" 2>$null
+}
 
 # Krok 2: Poczekaj 2 minuty
+Write-Host "Czekam 2 min na propagację..."
 Start-Sleep -Seconds 120
 
 # Krok 3: Usuń resource group (wszystkie zasoby)
 az group delete --name $rg --yes --no-wait
-Write-Host "Usuwanie w toku. Zajmie ~10 min."
+Write-Host "Usuwanie RG w toku. Zajmie ~10 min."
 
-# Krok 4: Po usunięciu RG — purguj konto AI (soft-delete protection)
+# Krok 4: Po usunięciu RG — purguj soft-deleted resources
 # Poczekaj aż RG się usunie, potem:
-az cognitiveservices account purge --name $aiName --resource-group $rg --location swedencentral
+
+# Purge Foundry Account
+az cognitiveservices account purge --name $aiName --resource-group $rg --location $location
+
+# Purge APIM Standard v2 (soft-delete protection)
+if ($apimName) {
+    az rest --method DELETE `
+      --uri "https://management.azure.com/subscriptions/$sub/providers/Microsoft.ApiManagement/locations/$location/deletedservices/$apimName`?api-version=2024-06-01-preview"
+    Write-Host "APIM purged: $apimName"
+}
+
+# Opcjonalnie: Usuń custom role
+az role definition delete --name "Foundry Model Reader" 2>$null
 ```
 
 ---
@@ -1616,10 +1653,15 @@ az cognitiveservices account purge --name $aiName --resource-group $rg --locatio
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
 | "Account in state Accepted" | networkInjections provisionuje się asynchronicznie | Skrypt ma retry logic — poczeka i ponowi |
-| "You don't have permission to build agents" | Rola Azure AI User = read-only | Nadaj **Azure AI Developer** na Account lub Project |
+| "You don't have permission to build agents" | Brak roli Foundry User | Nadaj **Foundry User** na Project scope |
 | "Request blocked by Auth cosmos" | Brak CosmosDB data plane RBAC | Dodaj `Cosmos DB Built-in Data Contributor` przez `az cosmosdb sql role assignment create` |
 | "Connection is AzureBlob not AzureStorageAccount" | Zła kategoria storage connection | Kategoria MUSI być `AzureStorageAccount` |
 | Portal nie ładuje się z Internetu | Public access = Disabled | ✅ To poprawne zachowanie! Użyj Bastion lub VPN |
+| "Error loading your agents" w portalu | Przeglądarka InPrivate blokuje auth cookies | Użyj **normalnej sesji** przeglądarki (nie InPrivate) |
+| Portal Agents nie ładuje się | Brak roli Foundry User na projekcie | Nadaj **Foundry User** na scope projekt |
+| AI Gateway nie widzi APIM | APIM jest w tierze v1 (Developer/Classic) | Foundry AI Gateway wymaga **APIM v2** (Standard v2/Premium v2) |
+| BYOM: "Name or service not known" | APIM Internal VNet — agent nie resolves DNS | Użyj APIM z **Private Endpoint** (Standard v2+) zamiast Internal VNet |
+| "ServiceAlreadyExists" przy deploy APIM | Soft-deleted APIM blokuje nazwę | Purguj: `az rest --method DELETE` na deletedservices endpoint |
 | VPN Gateway: "must have zones" | AZ SKU wymaga zone-redundant PIP | Public IP musi mieć `zones: ['1','2','3']` |
 | Deploy trwa >30 min | VPN Gateway jest powolny | To normalne — Gateway tworzy się 25 min |
 

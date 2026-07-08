@@ -117,6 +117,35 @@ if ($mainAccount -and $mainAccount.identity.principalId) {
     Add-Result "RBAC" "Account MI role count" $(if($roles.Count -ge 3){"PASS"}else{"WARN"}) "$($roles.Count) role(s)"
 }
 
+# ========== APIM ==========
+Write-Host "`n--- APIM ---" -ForegroundColor Magenta
+$apimList = az apim list -g $rg -o json 2>$null | ConvertFrom-Json
+if ($apimList -and $apimList.Count -gt 0) {
+    $apim = $apimList[0]
+    Add-Result "APIM" "Instance exists" "PASS" "$($apim.name) (SKU: $($apim.sku.name))"
+
+    $isV2 = $apim.sku.name -match "V2|v2"
+    Add-Result "APIM" "SKU v2 (AI Gateway ready)" $(if($isV2){"PASS"}else{"WARN"}) $apim.sku.name
+
+    $apimPe = $peList | Where-Object { $_.name -match "apim" }
+    if ($apimPe) {
+        $peConn = ($apimPe.privateLinkServiceConnections + $apimPe.manualPrivateLinkServiceConnections) | Select-Object -First 1
+        $peStatus = $peConn.privateLinkServiceConnectionState.status
+        Add-Result "APIM" "Private Endpoint" $(if($peStatus -eq "Approved"){"PASS"}else{"FAIL"}) "Status: $peStatus"
+    } else {
+        Add-Result "APIM" "Private Endpoint" "WARN" "No APIM PE found"
+    }
+
+    # Check APIM MI role on Foundry
+    if ($apim.identity.principalId) {
+        $apimRoles = az role assignment list --assignee $apim.identity.principalId --scope $mainAccount.id -o json 2>$null | ConvertFrom-Json
+        $hasOaiRole = ($apimRoles | Where-Object { $_.roleDefinitionName -match "OpenAI" }).Count -gt 0
+        Add-Result "APIM" "MI → Cognitive Services OpenAI User" $(if($hasOaiRole){"PASS"}else{"FAIL"}) "$($apimRoles.Count) role(s)"
+    }
+} else {
+    Add-Result "APIM" "Instance" "WARN" "Not deployed (Faza 8 is optional)"
+}
+
 # ========== FINAL VERDICT ==========
 Write-Host "`n" -NoNewline
 Write-Host ("=" * 60) -ForegroundColor Cyan
